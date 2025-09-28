@@ -1,0 +1,32 @@
+[package]
+name = "yarms-datagen"
+version = "0.1.0"
+edition.workspace = true
+description = "Data generation for various Minecraft versions."
+
+[lints]
+workspace = true
+
+[features]
+all = [ "packet" ]
+packet = [ "yarms-datagen-spec/packet" ]
+
+[dependencies]
+yarms-derive = { path = "../yarms-derive", default-features = false }
+yarms-identifier = { path = "../yarms-identifier", default-features = false }
+yarms-packet = { path = "../yarms-packet", default-features = false }
+yarms-protocol = { path = "../yarms-protocol", default-features = false, features = [ "identifier" ] }
+
+bytes = { version = "1.10.1", default-features = false }
+
+[build-dependencies]
+yarms-datagen-spec = { path = "../yarms-datagen-spec", default-features = false, features = [ "all" ] }
+yarms-identifier = { path = "../yarms-identifier", default-features = false }
+yarms-packet = { path = "../yarms-packet", default-features = false }
+
+prettyplease = { version = "0.2.31", default-features = false }
+proc-macro2 = { version = "1.0.94", default-features = false }
+quote = { version = "1.0.40", default-features = false }
+serde = { version = "1.0.219", default-features = false, features = [ "std" ] }
+serde_json = { version = "1.0.140", default-features = false, features = [ "std" ] }
+syn = { version = "2.0.100", default-features = false, features = [ "parsing", "visit" ] }

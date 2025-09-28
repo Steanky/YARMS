@@ -1,0 +1,22 @@
+[package]
+name = "yarms-protocol"
+version = "0.1.0"
+edition.workspace = true
+description = "Fundamental utilities and simple types for implementing the Minecraft protocol."
+
+[dependencies]
+yarms-identifier = { path = "../yarms-identifier", optional = true }
+
+bytes = { version = "1.10.0", default-features = false }
+libdeflater = { version = "1.23.0", default-features = false, optional = true }
+
+[features]
+default = [ "std", "identifier" ]
+
+bmi2-intrinsics = []
+libdeflater = [ "dep:libdeflater" ]
+identifier = [ "dep:yarms-identifier" ]
+std = [ ]
+
+[lints]
+workspace = true

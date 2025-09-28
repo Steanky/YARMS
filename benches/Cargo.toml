@@ -1,0 +1,34 @@
+[package]
+name = "benches"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+
+
+[dependencies]
+yarms-protocol = { path = "../yarms-protocol" }
+yarms-util-future = { path = "../yarms-util-future" }
+
+bytes = { version = "1.9.0", default-features = false }
+criterion = { version = "0.5.1", features = [ "html_reports", "async_tokio" ] }
+tokio = { version = "1.43.0", features = [ "full" ] }
+
+[[bench]]
+name = "varint_read"
+path = "varint_read.rs"
+harness = false
+
+[[bench]]
+name = "varint_write"
+path = "varint_write.rs"
+harness = false
+
+[[bench]]
+name = "varlen"
+path = "varlen.rs"
+harness = false
+
+[[bench]]
+name = "signaller"
+path = "signaller.rs"
+harness = false

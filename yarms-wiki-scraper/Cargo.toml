@@ -1,0 +1,21 @@
+[package]
+name = "yarms-wiki-scraper"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+
+[dependencies]
+yarms-datagen-spec = { path = "../yarms-datagen-spec", default-features = false, features = [ "all" ] }
+yarms-identifier = { path = "../yarms-identifier", default-features = false }
+yarms-packet = { path = "../yarms-packet", default-features = false }
+
+clap = { version = "4.5.32", default-features = false, features = [ "help", "wrap_help", "derive", "std" ] }
+ego-tree = { version = "0.10.0", default-features = false }
+lazy_static = { version = "1.5.0", default-features = false }
+regex = { version = "1.11.1", default-features = false, features = [ "std", "perf" ] }
+scraper = { version = "0.23.1", default-features = false }
+serde = { version = "1.0.219", default-features = false }
+serde_json = { version = "1.0.140", default-features = false, features = [ "alloc", "std" ] }
+
+[lints]
+workspace = true

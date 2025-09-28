@@ -1,0 +1,64 @@
+{
+  "id": 9999,
+  "packet_type_spec": {
+    "VarInt": "::yarms_protocol::types::VarInt",
+    "VarLong": "::yarms_protocol::types::VarLong",
+    "String": "::alloc::borrow::Cow<'a, str>",
+    "TestData": "super::data::TestData<'a>"
+  },
+  "packet": [
+    {
+      "name": "ExamplePacket",
+      "doc": "An example packet, used for testing.",
+      "packet_id": 42,
+      "resource": "example_packet",
+      "state": "Handshake",
+      "clientbound": true,
+      "fields": [
+        {
+          "name": "example",
+          "protocol_type": "VarInt",
+          "doc": "An example field, encoded as a VarInt."
+        },
+        {
+          "name": "example_2",
+          "protocol_type": "TestData",
+          "doc": "A field that uses a generated type!"
+        }
+      ]
+    },
+    {
+      "name": "ExamplePacket2",
+      "doc": "Part 2 is even better!",
+      "packet_id": 43,
+      "resource": "example_packet_2",
+      "state": "Handshake",
+      "clientbound": true,
+      "fields": [
+        {
+          "name": "wow_its_another_example",
+          "protocol_type": "VarLong",
+          "doc": "This example is the best one."
+        }
+      ]
+    }
+  ],
+  "packet_data": [
+    {
+      "name": "TestData",
+      "doc": "A testing data type.",
+      "fields": [
+        {
+          "name": "name",
+          "doc": "Testing name.",
+          "protocol_type": "VarLong"
+        },
+        {
+          "name": "value",
+          "doc": "Testing value.",
+          "protocol_type": "String"
+        }
+      ]
+    }
+  ]
+}

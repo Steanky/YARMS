@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "benches",
+    "yarms-datagen", "yarms-datagen-spec",
+    "yarms-identifier",
+    "yarms-packet",
+    "yarms-derive",
+    "yarms-packet-io",
+    "yarms-protocol" ,
+    "yarms-util-future"
+,   "yarms-wiki-scraper",
+    "yarms-nbt"
+]
+
+[workspace.lints.clippy]
+alloc_instead_of_core = "warn"
+allow_attributes_without_reason = "warn"
+as_underscore = "warn"
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+deref_by_slicing = "warn"
+impl_trait_in_params = "warn"
+missing_assert_message = "warn"
+pedantic = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+ref_patterns = "warn"
+self_named_module_files = "warn"
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"
+str_to_string = "warn"
+string_to_string = "warn"
+string_add = "warn"
+tests_outside_test_module = "warn"
+todo = "warn"
+try_err = "warn"
+undocumented_unsafe_blocks = "warn"
+unneeded_field_pattern = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unseparated_literal_suffix = "warn"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+non_ascii_idents = "forbid"
+
+[workspace.package]
+edition = "2021"
