@@ -6,16 +6,18 @@ description = "Fundamental utilities and simple types for implementing the Minec
 
 [dependencies]
 yarms-identifier = { path = "../yarms-identifier", optional = true }
+yarms-nbt = { path = "../yarms-nbt", optional = true }
 
-bytes = { version = "1.10.0", default-features = false }
+bytes = { version = "1.10.1", default-features = false }
 libdeflater = { version = "1.23.0", default-features = false, optional = true }
 
 [features]
-default = [ "std", "identifier" ]
+default = [ "std", "identifier", "nbt" ]
 
 bmi2-intrinsics = []
-libdeflater = [ "dep:libdeflater" ]
 identifier = [ "dep:yarms-identifier" ]
+libdeflater = [ "dep:libdeflater" ]
+nbt = [ "dep:yarms-nbt" ]
 std = [ ]
 
 [lints]

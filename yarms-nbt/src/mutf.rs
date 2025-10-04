@@ -1,7 +1,6 @@
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 use core::str::FromStr;
-use memchr::memmem::Finder;
 
 const NONASCII_MASK: usize = usize::from_ne_bytes([0x80; size_of::<usize>()]);
 
@@ -13,7 +12,7 @@ const IS_TEST: bool = cfg!(test);
 
 ///
 /// Given an input `str`, produces a byte array of valid MUTF-8 data. This is the inverse of
-/// [`from_modified_utf8`]. Unlike that function, this one is infallible. Any `str` may be
+/// [`from_mutf8`]. Unlike that function, this one is infallible. Any `str` may be
 /// converted into MUTF-8.
 ///
 /// Converting a UTF-8 encoded `str` to MUTF-8 requires allocation if the input string contains
@@ -25,7 +24,7 @@ const IS_TEST: bool = cfg!(test);
 /// use std::borrow::Cow;
 /// let input = "null\0";
 ///
-/// let mutf8 = yarms_nbt::mutf::into_modified_utf8(input);
+/// let mutf8 = yarms_nbt::mutf::into_mutf8(input);
 ///
 /// // null byte will be replaced with the overlong encoding 0xC0 0x80
 /// assert_eq!(&mutf8, &[b'n', b'u', b'l', b'l', 0xC0, 0x80].as_slice());
@@ -33,7 +32,8 @@ const IS_TEST: bool = cfg!(test);
 ///
 /// # Panics
 /// This function will only panic if there is an internal bug, or an allocation failure.
-pub fn into_modified_utf8(str: &str) -> Cow<[u8]> {
+#[must_use]
+pub fn into_mutf8(str: &str) -> Cow<[u8]> {
     let bytes = str.as_bytes();
 
     let mut idx = 0;
@@ -61,11 +61,7 @@ pub fn into_modified_utf8(str: &str) -> Cow<[u8]> {
         } else {
             let width = usize::from(UTF8_CHAR_WIDTH[usize::from(sample)]);
 
-            if width != 4 {
-                if !alloc.is_empty() {
-                    alloc.extend_from_slice(&bytes[idx..idx + width]);
-                }
-            } else {
+            if width == 4 {
                 let target_slice = &bytes[idx..idx + width];
 
                 if IS_TEST {
@@ -83,7 +79,10 @@ pub fn into_modified_utf8(str: &str) -> Cow<[u8]> {
                     u32::from(char::from_str(substr).unwrap_unchecked()) - 0x10000
                 };
 
+                #[allow(clippy::cast_possible_truncation, reason = "Truncation is deliberate here")]
                 let hi = ((char >> 10) | 0xD800) as u16;
+
+                #[allow(clippy::cast_possible_truncation, reason = "Truncation is deliberate here")]
                 let lo = ((char & 0x3FF) | 0xDC00) as u16;
 
                 let hi = encode_cesu_surrogate(hi);
@@ -96,6 +95,8 @@ pub fn into_modified_utf8(str: &str) -> Cow<[u8]> {
 
                 alloc.extend_from_slice(&hi);
                 alloc.extend_from_slice(&lo);
+            } else if !alloc.is_empty() {
+                alloc.extend_from_slice(&bytes[idx..idx + width]);
             }
 
             idx += width;
@@ -111,7 +112,7 @@ pub fn into_modified_utf8(str: &str) -> Cow<[u8]> {
 
 ///
 /// Converts Java's "modified UTF-8", also known as MUTF-8, to a regular UTF-8 `str`. This is the
-/// inverse of [`into_modified_utf8`].
+/// inverse of [`into_mutf8`].
 ///
 /// This function will attempt to avoid allocation whenever possible. It will not allocate unless a
 /// conversion from MUTF-8 to UTF-8 would change the length of the slice. If an allocation occurs,
@@ -134,13 +135,17 @@ pub fn into_modified_utf8(str: &str) -> Cow<[u8]> {
 /// // this is the above string, encoded in MUTF-8
 /// let mutf_bytes = [0x4D, 0x61, 0xED, 0xAE, 0x80, 0xED, 0xB0, 0x80];
 ///
-/// let result = yarms_nbt::mutf::from_modified_utf8(&mutf_bytes).expect("should have been valid MUTF-8");
+/// let result = yarms_nbt::mutf::from_mutf8(&mutf_bytes).expect("should have been valid MUTF-8");
 /// assert_eq!(&result, &utf_string);
 /// ```
 ///
 /// # Panics
 /// This function will only panic if there is an internal bug or allocation failure.
-pub fn from_modified_utf8(bytes: &[u8]) -> Option<Cow<str>> {
+#[must_use]
+pub fn from_mutf8(bytes: &[u8]) -> Option<Cow<str>> {
+    const USIZE_BYTES: usize = size_of::<usize>();
+    const ASCII_BLOCK_SIZE: usize = 2 * USIZE_BYTES;
+
     if memchr::memchr(0x0, bytes).is_some() {
         // null byte is not valid in MUTF-8
         // by filtering this out early, we can use an optimized routine to quickly skip over valid
@@ -150,9 +155,6 @@ pub fn from_modified_utf8(bytes: &[u8]) -> Option<Cow<str>> {
 
     let mut decoded = Vec::new();
     let len = bytes.len();
-
-    const USIZE_BYTES: usize = size_of::<usize>();
-    const ASCII_BLOCK_SIZE: usize = 2 * USIZE_BYTES;
 
     let align = bytes.as_ptr().align_offset(USIZE_BYTES);
     let blocks_end = if len >= ASCII_BLOCK_SIZE {
@@ -179,6 +181,8 @@ pub fn from_modified_utf8(bytes: &[u8]) -> Option<Cow<str>> {
         macro_rules! next_continue {
             () => {{
                 let next = next!();
+
+                #[allow(clippy::cast_possible_wrap, reason = "Wrapping is acceptable here")]
                 if next as i8 >= -64 {
                     return None;
                 }
@@ -199,8 +203,9 @@ pub fn from_modified_utf8(bytes: &[u8]) -> Option<Cow<str>> {
                     // SAFETY:
                     // `pos` is aligned as we just checked that it's divisible by USIZE_BYTES
                     // dereferencing `block`, therefore, is safe
+                    #[allow(clippy::cast_ptr_alignment, reason = "We check for alignment with usize")]
                     unsafe {
-                        let block = ptr.add(pos) as *const usize;
+                        let block = ptr.add(pos).cast::<usize>();
 
                         let zu = contains_nonascii(*block);
                         let zv = contains_nonascii(*block.add(1));
@@ -261,9 +266,8 @@ pub fn from_modified_utf8(bytes: &[u8]) -> Option<Cow<str>> {
                         // valid UTF-8 bytes
                         // these are just passed through and incur zero cost
                         (0xE0, 0xA0..=0xBF)
-                        | (0xE1..=0xEC, 0x80..=0xBF)
-                        | (0xED, 0x80..=0x9F)
-                        | (0xEE..=0xEF, 0x80..=0xBF) => {
+                        | (0xE1..=0xEC | 0xEE..=0xEF, 0x80..=0xBF)
+                        | (0xED, 0x80..=0x9F) => {
                             if !decoded.is_empty() {
                                 decoded.push(first);
                                 decoded.push(second);
@@ -284,7 +288,7 @@ pub fn from_modified_utf8(bytes: &[u8]) -> Option<Cow<str>> {
 
                             // ensure the 2nd byte of the low surrogate is in a valid range
                             // (this also checks that it's a valid CESU-8 code unit)
-                            if fifth < 0xB0 || fifth > 0xBF {
+                            if !(0xB0..=0xBF).contains(&fifth) {
                                 return None;
                             }
 
@@ -298,7 +302,7 @@ pub fn from_modified_utf8(bytes: &[u8]) -> Option<Cow<str>> {
                             // this operation changes our length...
                             if decoded.is_empty() {
                                 decoded.reserve_exact(bytes.len() - 2);
-                                decoded.extend_from_slice(&bytes[..old_pos])
+                                decoded.extend_from_slice(&bytes[..old_pos]);
                             }
 
                             decoded.extend_from_slice(&utf8);
@@ -318,11 +322,7 @@ pub fn from_modified_utf8(bytes: &[u8]) -> Option<Cow<str>> {
     }
 
     if IS_TEST {
-        let bytes = if decoded.is_empty() {
-            bytes
-        } else {
-            &decoded[..]
-        };
+        let bytes = if decoded.is_empty() { bytes } else { &*decoded };
 
         // we perform this assert here instead of in a test function for several reasons:
         // - this function returns a `str`, any UTF-8 validation done in such a test function may
@@ -395,7 +395,7 @@ const UTF8_CHAR_WIDTH: &[u8; 256] = &[
 
 #[cfg(test)]
 mod tests {
-    use crate::mutf::{from_modified_utf8, into_modified_utf8, IS_TEST};
+    use crate::mutf::{from_mutf8, into_mutf8, IS_TEST};
     use alloc::borrow::Cow;
     use alloc::vec::Vec;
     use std::io::Read;
@@ -406,7 +406,7 @@ mod tests {
     fn test_equivalent_utf8<I: IntoIterator<Item = u8>>(bytes: I) {
         let input_bytes = bytes.into_iter().collect::<Vec<_>>();
 
-        let result = from_modified_utf8(&input_bytes).expect("input should be valid MUTF-8");
+        let result = from_mutf8(&input_bytes).expect("input should be valid MUTF-8");
         assert_eq!(
             result,
             core::str::from_utf8(&input_bytes).expect("output should be valid UTF-8")
@@ -418,8 +418,8 @@ mod tests {
         let str =
             core::str::from_utf8(&input_bytes[..]).expect("input bytes should be valid UTF-8");
 
-        let mutf8 = into_modified_utf8(str);
-        let new_utf8 = from_modified_utf8(&mutf8).expect("input bytes should be valid MUTF-8");
+        let mutf8 = into_mutf8(str);
+        let new_utf8 = from_mutf8(&mutf8).expect("input bytes should be valid MUTF-8");
 
         assert_eq!(str, new_utf8);
     }
@@ -431,13 +431,13 @@ mod tests {
 
     #[test]
     fn null_byte_is_none() {
-        assert!(from_modified_utf8(&[42, 42, 42, 0]).is_none())
+        assert!(from_mutf8(&[42, 42, 42, 0]).is_none())
     }
 
     #[test]
     fn encoded_null_byte() {
         let mutf8 = [0xC0, 0x80];
-        let out = from_modified_utf8(&mutf8).expect("input should be valid MUTF-8");
+        let out = from_mutf8(&mutf8).expect("input should be valid MUTF-8");
         assert_eq!(
             out,
             String::from_utf8(vec![0]).expect("input should be valid UTF-8")
@@ -466,7 +466,7 @@ mod tests {
         // from the example in https://www.unicode.org/reports/tr26/tr26-4.html
         let cesu_bytes = [0x4D, 0x61, 0xED, 0xAE, 0x80, 0xED, 0xB0, 0x80];
 
-        let result = from_modified_utf8(&cesu_bytes).expect("should have been valid MUTF-8");
+        let result = from_mutf8(&cesu_bytes).expect("should have been valid MUTF-8");
         assert!(matches!(result, Cow::Owned(_)));
         assert_eq!(result, utf_string);
     }
