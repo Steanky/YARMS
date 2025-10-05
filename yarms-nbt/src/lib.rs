@@ -1300,7 +1300,6 @@ mod tests {
     use crate::{deserialize_file, deserialize_network, keys, tag};
     use alloc::vec::Vec;
     use std::io::Read;
-    use std::println;
 
     // adapted from https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/NBT#Specification
     #[test]
@@ -1384,6 +1383,5 @@ mod tests {
         });
 
         assert_eq!(expected, tag);
-        println!("{:#?}", expected);
     }
 }
