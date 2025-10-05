@@ -7,7 +7,7 @@ description = "Minecraft packet definitions."
 [dependencies]
 yarms-protocol = { path = "../yarms-protocol", default-features = false }
 
-bytes = { version = "1.10.0", default-features = false }
+bytes = { version = "1.10.1", default-features = false }
 
 [lints]
 workspace = true

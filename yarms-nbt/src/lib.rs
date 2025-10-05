@@ -11,7 +11,7 @@ mod array_stack;
 /// Convert to and from Java's "modified UTF-8" (MUTF-8) format and normal, sane UTF-8 strings.
 pub mod mutf;
 
-pub(crate) extern crate alloc;
+pub extern crate alloc;
 
 #[cfg(feature = "std")]
 pub(crate) extern crate std;
@@ -22,7 +22,6 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::fmt::{Debug, Display, Formatter};
 use hashbrown::hash_map::Entry;
-use hashbrown::HashMap;
 
 #[doc(hidden)]
 pub use hashbrown as __hash_map;
@@ -32,55 +31,55 @@ pub use hashbrown as __hash_map;
 pub type Name<'a> = Option<Cow<'a, str>>;
 
 ///
-/// Type identifier for [`Tag::End`].
+/// Type identifier for `TAG_End`.
 pub const TAG_END: u8 = 0;
 
 ///
-/// Type identifier for [`Tag::Byte`].
+/// Type identifier for `TAG_Byte`.
 pub const TAG_BYTE: u8 = 1;
 
 ///
-/// Type identifier for [`Tag::Short`].
+/// Type identifier for `TAG_Short`.
 pub const TAG_SHORT: u8 = 2;
 
 ///
-/// Type identifier for [`Tag::Int`].
+/// Type identifier for `TAG_Int`.
 pub const TAG_INT: u8 = 3;
 
 ///
-/// Type identifier for [`Tag::Long`].
+/// Type identifier for `TAG_Long`.
 pub const TAG_LONG: u8 = 4;
 
 ///
-/// Type identifier for [`Tag::Float`].
+/// Type identifier for `TAG_Float`.
 pub const TAG_FLOAT: u8 = 5;
 
 ///
-/// Type identifier for [`Tag::Double`].
+/// Type identifier for `TAG_Double`.
 pub const TAG_DOUBLE: u8 = 6;
 
 ///
-/// Type identifier for [`Tag::ByteArray`].
+/// Type identifier for `TAG_Byte_Array`.
 pub const TAG_BYTE_ARRAY: u8 = 7;
 
 ///
-/// Type identifier for [`Tag::String`].
+/// Type identifier for `TAG_String`.
 pub const TAG_STRING: u8 = 8;
 
 ///
-/// Type identifier for [`Tag::List`].
+/// Type identifier for `TAG_List`.
 pub const TAG_LIST: u8 = 9;
 
 ///
-/// Type identifier for [`Tag::Compound`].
+/// Type identifier for `TAG_Compound`.
 pub const TAG_COMPOUND: u8 = 10;
 
 ///
-/// Type identifier for [`Tag::IntArray`].
+/// Type identifier for `TAG_Int_Array`.
 pub const TAG_INT_ARRAY: u8 = 11;
 
 ///
-/// Type identifier for [`Tag::LongArray`].
+/// Type identifier for `TAG_Long_Array`.
 pub const TAG_LONG_ARRAY: u8 = 12;
 
 ///
@@ -101,7 +100,7 @@ macro_rules! __keys_internal {
     };
 
     ( $( $tail:tt ),+ ) => {
-        $( tag_keys_internal!( $tail ) ),+
+        $( __keys_internal!( $tail ) ),+
     };
 }
 
@@ -144,40 +143,35 @@ macro_rules! __tag_name {
         core::option::Option::None
     };
 
-    ( $e:literal ) => {{
-        extern crate alloc;
-        core::option::Option::Some(alloc::borrow::Cow::Borrowed($e))
-    }};
+    ( $e:literal ) => {
+        core::option::Option::Some($crate::alloc::borrow::Cow::Borrowed($e))
+    };
 
-    ( $e:expr ) => {{
-        extern crate alloc;
+    ( $e:expr ) => {
+        core::option::Option::Some($crate::alloc::borrow::Cow::Owned($e.into()))
+    };
 
-        let string = $e.to_string();
-        core::option::Option::Some(alloc::borrow::Cow::Owned(string))
-    }};
-
-    ( ref $e:expr ) => {{
-        extern crate alloc;
-        core::option::Option::Some(alloc::borrow::Cow::Borrowed($e))
-    }};
+    ( ref $e:expr ) => {
+        core::option::Option::Some($crate::alloc::borrow::Cow::Borrowed($e))
+    };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __gen_list_array {
     ( $element_type:ident, ) => {{
-        [$crate::Tag::End; 0]
+        [$crate::TagRepr::End; 0]
     }};
 
     ( $element_type:ident, $( $sublist_type:ident : $value:tt ),+ ) => {[
         $({
-            tag!($sublist_type List : $value)
+            $crate::__tag_repr!($sublist_type List : $value)
         }),+
     ]};
 
     ( $element_type:ident, $( $value:tt ),+ ) => {[
         $({
-            tag!($element_type : $value)
+            $crate::__tag_repr!($element_type : $value)
         }),+
     ]};
 }
@@ -186,14 +180,13 @@ macro_rules! __gen_list_array {
 #[macro_export]
 macro_rules! __gen_compound_array {
     () => {{
-        extern crate alloc;
-        [(alloc::borrow::Cow::Borrowed(""), $crate::Tag::End); 0]
+        [($crate::alloc::borrow::Cow::Borrowed(""), $crate::TagRepr::End); 0]
     }};
 
     ( $( $tag_type:ident $( $list:ident )? [$( $tag_name:tt )+] : $value:tt ),+ ) => {[
         $({
-        let tag = tag!($tag_type $( $list )? [$( $tag_name )+] : $value);
-        (tag.name().unwrap().clone(), tag)
+            let tag = $crate::__tag_repr!($tag_type $( $list )? [$( $tag_name )+] : $value );
+            (tag.name().unwrap().clone(), tag)
         }),+
     ]};
 }
@@ -242,11 +235,68 @@ macro_rules! __resolve_ty {
     };
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tag_repr {
+    ( Byte$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::Byte($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
+    };
+
+    ( Short$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::Short($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
+    };
+
+    ( Int$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::Int($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
+    };
+
+    ( Long$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::Long($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
+    };
+
+    ( Float$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::Float($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
+    };
+
+    ( Double$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::Double($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
+    };
+
+    ( ByteArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::ByteArray($crate::__tag_name!($( $( $tag_name )+ )?),
+        $crate::alloc::borrow::Cow::Owned($tag_value.into()))
+    };
+
+    ( String$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::String($crate::__tag_name!($( $( $tag_name )+ )?),
+        $crate::alloc::borrow::Cow::Owned($tag_value.into()))
+    };
+
+    ( IntArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::IntArray($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value.into())
+    };
+
+    ( LongArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+        $crate::TagRepr::LongArray($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value.into())
+    };
+
+    ( Compound$( [$( $tag_name:tt )+] )? : { $( $tag_value:tt )* } ) => {
+        $crate::TagRepr::Compound($crate::__tag_name!($( $( $tag_name )+ )?),
+        $crate::__hash_map::HashMap::from($crate::__gen_compound_array!($( $tag_value )*)))
+    };
+
+    ( $element_type:ident List $( [$( $tag_name:tt )+] )? : [ $( $list_body:tt )* ] ) => {
+        $crate::TagRepr::List($crate::__tag_name!($( $( $tag_name )+ )?),
+        $crate::__resolve_ty!($element_type),
+        $crate::alloc::vec::Vec::from($crate::__gen_list_array!($element_type, $( $list_body )*)))
+    };
+}
+
 ///
 /// Easy way of constructing predefined [`Tag`] variants in code.
 ///
 /// ```
-/// use yarms_nbt::tag;
+/// use yarms_nbt::{keys, tag};
 ///
 /// let example = tag!(Compound: {
 ///     Byte["value"]: 42,
@@ -256,166 +306,166 @@ macro_rules! __resolve_ty {
 ///         {
 ///             String["test1"]: "a string",
 ///
-///             // empty list
-///             String List["test"]: [ "succ", "memes" ]
+///             // string list
+///             String List["test"]: [
+///                 "hello"
+///             ]
 ///         }
 ///     ]
 /// });
 ///
+/// let tag = example.get(&keys!({"list of compounds"}, 1, {"test"}, 0)).expect("tag should exist");
+/// assert_eq!("hello", tag.as_string().expect("tag should be a string"));
+///
 /// ```
 #[macro_export]
 macro_rules! tag {
-    () => {};
+    ( $( $everything:tt )* ) => {
+        $crate::__wrap_nbt($crate::__tag_repr!($( $everything )*))
+    };
+}
 
-    ( Byte$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        $crate::Tag::Byte($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
-    }};
-
-    ( Short$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        $crate::Tag::Short($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
-    }};
-
-    ( Int$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        $crate::Tag::Int($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
-    }};
-
-    ( Long$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        $crate::Tag::Long($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
-    }};
-
-    ( Float$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        $crate::Tag::Int($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
-    }};
-
-    ( Double$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        $crate::Tag::Double($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
-    }};
-
-    ( ByteArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        extern crate alloc;
-        let owned: Vec<u8> = $tag_value.into();
-        $crate::Tag::ByteArray($crate::__tag_name!($( $( $tag_name )+ )?), alloc::borrow::Cow::Owned(owned))
-    }};
-
-    ( ByteArray$( [$( $tag_name:tt )+] )? : ref $tag_value:expr ) => {{
-        extern crate alloc;
-        $crate::Tag::ByteArray($crate::__tag_name!($( $( $tag_name )+ )?), alloc::borrow::Cow::Borrowed($tag_value))
-    }};
-
-    ( String$( [$( $tag_name:tt )+] )? : $tag_value:literal ) => {{
-        extern crate alloc;
-        $crate::Tag::String($crate::__tag_name!($( $( $tag_name )+ )?), alloc::borrow::Cow::Borrowed($tag_value))
-    }};
-
-    ( String$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        extern crate alloc;
-        $crate::Tag::String($crate::__tag_name!($( $( $tag_name )+ )?), alloc::borrow::Cow::Owned($tag_value.to_string()))
-    }};
-
-    ( String$( [$( $tag_name:tt )+] )? : ref $tag_value:expr ) => {{
-        extern crate alloc;
-        $crate::Tag::String($crate::__tag_name!($( $( $tag_name )+ )?), alloc::borrow::Cow::Borrowed($tag_value))
-    }};
-
-    ( IntArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        extern crate alloc;
-        let owned: alloc::vec::Vec<i32> = $tag_value.into();
-        $crate::Tag::IntArray($crate::__tag_name!($( $( $tag_name )+ )?), owned)
-    }};
-
-    ( LongArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {{
-        extern crate alloc;
-        let owned: alloc::vec::Vec<i64> = $tag_value.into();
-        $crate::Tag::LongArray($crate::__tag_name!($( $( $tag_name )+ )?), owned)
-    }};
-
-    ( Compound$( [$( $tag_name:tt )+] )? : { $( $tag_value:tt )* } ) => {{
-        let map = $crate::__hash_map::HashMap::from($crate::__gen_compound_array!($( $tag_value )*));
-        $crate::Tag::Compound($crate::__tag_name!($( $( $tag_name )+ )?), map)
-    }};
-
-    ( $element_type:ident List $( [$( $tag_name:tt )+] )? : [ $( $list_body:tt )* ] ) => {{
-        extern crate alloc;
-
-        let list = alloc::vec::Vec::from($crate::__gen_list_array!($element_type, $( $list_body )*));
-        $crate::Tag::List($crate::__tag_name!($( $( $tag_name )+ )?), $crate::__resolve_ty!($element_type), list)
-    }};
+// not meant to be accessed outside of macro code
+#[doc(hidden)]
+#[allow(
+    private_interfaces,
+    reason = "This is public for macro access, and hidden as it's not meant to be used."
+)]
+#[must_use]
+pub fn __wrap_nbt(repr: TagRepr) -> Tag {
+    Tag { repr }
 }
 
 ///
-/// Enum representing all valid NBT tag types and their payload, if any.
+/// Representation of a single, arbitrary named binary tag. Instances can be created either through
+/// deserialization from a byte slice [`deserialize_network`]/[`deserialize_file`], or directly in
+/// code using the [`tag`] macro.
 ///
 /// Tags have an associated lifetime, which allows variants that need it to borrow directly from an
 /// underlying byte slice. This can significantly cut down on allocations, though the tag will be
 /// bound to the lifetime of the storage. Tags can be cloned if a longer lifetime is needed.
 ///
-/// [`Tag::List`] and [`Tag::Compound`] may themselves contain other tags. and thus complex nested
-/// data structures may be formed.
+/// Use [`deserialize_network`] to construct a tag from network data, or [`deserialize_file`] to
+/// construct using the file variant.
 ///
-/// Use [`deserialize_internal`] to construct a tag from network data.
+/// Tags provide a family of so-called `as_*` methods that permit access to their underlying
+/// payload. These all yield an [`Option`], which will be empty if the type does not match. For
+/// example:
+/// ```
+/// use yarms_nbt::tag;
+///
+/// // Create a TAG_Byte named "test".
+/// let tag = tag!(Byte["test"]: 42);
+///
+/// // Access its payload.
+/// assert_eq!(Some(42), tag.as_byte());
+///
+/// // The tag isn't a string, so `as_string` yields None.
+/// assert_eq!(None, tag.as_string());
+/// ```
+///
+/// Some tags can contain other tags. These are considered "container" tags. One can determine if a
+/// tag is a container tag like so:
+/// ```
+/// use yarms_nbt::tag;
+///
+/// // Create an unnamed TAG_List of TAG_Int. List elements must be of homogenous type.
+/// let list = tag!(Int List: [0, 2, 3]);
+///
+/// // Create an unnamed TAG_Compound containing one element, a TAG_String named "hello" with
+/// // "hello world" as its payload. Compounds can't contain unnamed elements.
+/// let compound = tag!(Compound: { String["hello"]: "hello world" });
+///
+/// // Lists can contain other tags, so they're a container. Compounds are too.
+/// assert!(list.is_container());
+/// assert!(compound.is_container());
+///
+/// // Lists are lists, how novel! But compounds aren't.
+/// assert!(list.is_list());
+/// assert!(!compound.is_list());
+///
+/// // Lists are not compounds, but compounds are compounds.
+/// assert!(!list.is_compound());
+/// assert!(compound.is_compound());
+/// ```
+///
+/// One can add tags to containers using the [`Tag::add`] method:
+///
+/// ```
+/// use yarms_nbt::{keys, tag, Tag};
+///
+/// let mut compound = tag!(Compound: { String["name"]: "John Smith", Byte["age"]: 42 });
+///
+/// // Adds a new entry to the compound, for height.
+/// compound.add(tag!(Short["height"]: 182), false);
+///
+/// // Oops, a tag named height already existed in the root compound.
+/// // `replace` is false so we don't update it.
+/// compound.add(tag!(Short["height"]: 200), false);
+///
+/// assert_eq!(Some(182), compound.get(&keys!({"height"})).and_then(Tag::as_short));
+///
+/// ```
+///
+/// Containers can be iterated and modified through various `as_mut_*` methods:
+///
+/// ```
+/// use yarms_nbt::{keys, tag, Tag};
+///
+/// // A TAG_List of TAG_Int.
+/// let mut list = tag!(Int List: [ 0, 1, 2, 3 ]);
+///
+/// // `replace` doesn't matter when adding to a list.
+/// list.add(tag!(Int: 4), false);
+///
+/// // We can modify the elements if we want.
+/// // Note that `elem` is `TagAccess`, not `&mut Tag`!
+/// // Users cannot arbitrarily replace existing tags in a container.
+/// for mut elem in list.children_mut().expect("should be a container") {
+///     if let Some(val) = elem.as_int_mut() {
+///         *val += 1;
+///     }
+/// }
+///
+/// let expected = tag!(Int List: [ 1, 2, 3, 4, 5 ]);
+///
+/// assert_eq!(&list, &expected);
+///
+/// // Trying to add a named tag to a list isn't valid, and so we get our tag back.
+/// assert!(list.add(tag!(Int["test"]: 42), false).is_some());
+///
+/// // Trying to add a TAG_String into a TAG_List of element type TAG_Int also isn't valid.
+/// assert!(list.add(tag!(String: "hello"), false).is_some());
+///
+/// // The list is unchanged.
+/// assert_eq!(&list, &expected);
+///
+/// ```
 #[derive(Clone, PartialEq)]
-pub enum Tag<'a> {
-    ///
-    /// A special tag that is only used to terminate a `TAG_Compound`, or as the type of an empty
-    /// `TAG_List`. It never appears in deserialized data and is only useful during the
-    /// deserialization process.
-    ///
-    /// This tag, unlike all others, cannot have a name under any circumstances.
+#[repr(transparent)]
+pub struct Tag<'a> {
+    repr: TagRepr<'a>,
+}
+
+///
+/// Internal representation of a tag. Private to prevent constructing arbitrary (invalid) tags.
+///
+/// This enum may be transmuted to [`Tag`].
+#[derive(Clone, PartialEq)]
+#[doc(hidden)]
+pub enum TagRepr<'a> {
     End,
-
-    ///
-    /// A tag containing a signed 8-bit integer.
     Byte(Name<'a>, i8),
-
-    ///
-    /// A tag containing a signed 16-bit integer.
     Short(Name<'a>, i16),
-
-    ///
-    /// A tag containing  a signed 32-bit integer.
     Int(Name<'a>, i32),
-
-    ///
-    /// A tag containing a signed 64-bit integer.
     Long(Name<'a>, i64),
-
-    ///
-    /// A tag containing a 32-bit floating point number.
     Float(Name<'a>, f32),
-
-    ///
-    /// A tag containing a 64-bit floating point number.
     Double(Name<'a>, f64),
-
-    ///
-    /// A tag containing a raw byte slice. May be allocated separately, or it may point directly at
-    /// a segment of the input data.
     ByteArray(Name<'a>, Cow<'a, [u8]>),
-
-    ///
-    /// A tag containing a string. May be allocated separately, or it may point directly at a
-    /// segment of the input data.
     String(Name<'a>, Cow<'a, str>),
-
-    ///
-    /// A tag containing a list of other tags, and a type indicating the homogenous type of its
-    /// elements.
-    ///
-    /// When deserializing, none of the tags directly contained in a list will have names.
-    List(Name<'a>, u8, Vec<Tag<'a>>),
-
-    ///
-    /// A tag containing a map of other tags, keyed by their names, which must be present.
-    ///
-    /// Uses [`hashbrown::HashMap`] to avoid a dependency on `std`.
-    Compound(Name<'a>, HashMap<Cow<'a, str>, Tag<'a>>),
-
-    ///
-    /// A variable-length array of 32-bit signed integers.
+    List(Name<'a>, u8, Vec<TagRepr<'a>>),
+    Compound(Name<'a>, hashbrown::HashMap<Cow<'a, str>, TagRepr<'a>>),
     IntArray(Name<'a>, Vec<i32>),
-
-    ///
-    /// A variable length array of 64-bit signed integers.
     LongArray(Name<'a>, Vec<i64>),
 }
 
@@ -449,23 +499,34 @@ fn debug_tag(
     }
 }
 
-impl Debug for Tag<'_> {
+impl Debug for TagRepr<'_> {
+    #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Tag::End => f.debug_tuple("TAG_End").finish(),
-            Tag::Byte(name, byte) => debug_tag(f, "TAG_Byte", name, byte),
-            Tag::Short(name, short) => debug_tag(f, "TAG_Short", name, short),
-            Tag::Int(name, int) => debug_tag(f, "TAG_Int", name, int),
-            Tag::Long(name, long) => debug_tag(f, "TAG_Long", name, long),
-            Tag::Float(name, float) => debug_tag(f, "TAG_Float", name, float),
-            Tag::Double(name, double) => debug_tag(f, "TAG_Double", name, double),
-            Tag::ByteArray(name, byte_array) => debug_tag(f, "TAG_Byte_Array", name, byte_array),
-            Tag::String(name, string) => debug_tag(f, "TAG_String", name, string),
-            Tag::List(name, _, list) => debug_tag(f, "TAG_List", name, list),
-            Tag::Compound(name, compound) => debug_tag(f, "TAG_Compound", name, compound),
-            Tag::IntArray(name, int_array) => debug_tag(f, "TAG_Int_Array", name, int_array),
-            Tag::LongArray(name, long_array) => debug_tag(f, "TAG_Long_Array", name, long_array),
+            TagRepr::End => f.debug_tuple("TAG_End").finish(),
+            TagRepr::Byte(name, byte) => debug_tag(f, "TAG_Byte", name, byte),
+            TagRepr::Short(name, short) => debug_tag(f, "TAG_Short", name, short),
+            TagRepr::Int(name, int) => debug_tag(f, "TAG_Int", name, int),
+            TagRepr::Long(name, long) => debug_tag(f, "TAG_Long", name, long),
+            TagRepr::Float(name, float) => debug_tag(f, "TAG_Float", name, float),
+            TagRepr::Double(name, double) => debug_tag(f, "TAG_Double", name, double),
+            TagRepr::ByteArray(name, byte_array) => {
+                debug_tag(f, "TAG_Byte_Array", name, byte_array)
+            }
+            TagRepr::String(name, string) => debug_tag(f, "TAG_String", name, string),
+            TagRepr::List(name, _, list) => debug_tag(f, "TAG_List", name, list),
+            TagRepr::Compound(name, compound) => debug_tag(f, "TAG_Compound", name, compound),
+            TagRepr::IntArray(name, int_array) => debug_tag(f, "TAG_Int_Array", name, int_array),
+            TagRepr::LongArray(name, long_array) => {
+                debug_tag(f, "TAG_Long_Array", name, long_array)
+            }
         }
+    }
+}
+
+impl Debug for Tag<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.repr.fmt(f)
     }
 }
 
@@ -475,7 +536,7 @@ macro_rules! tag_get_impl {
 
         for key in $keys {
             match ctx {
-                Tag::List(_, _, storage) => {
+                TagRepr::List(_, _, storage) => {
                     if let TagKey::Index(index) = key {
                         ctx = storage.$func(*index)?;
                     } else {
@@ -483,7 +544,7 @@ macro_rules! tag_get_impl {
                     }
                 }
 
-                Tag::Compound(_, storage) => {
+                TagRepr::Compound(_, storage) => {
                     if let TagKey::Name(key) = key {
                         ctx = storage.$func(*key)?;
                     } else {
@@ -499,73 +560,69 @@ macro_rules! tag_get_impl {
     }};
 }
 
-impl<'a> Tag<'a> {
+macro_rules! as_impl {
+    ( $s:ident, $ty:ident ) => {{
+        if let $crate::TagRepr::$ty(_, val) = $s {
+            Some(val)
+        } else {
+            None
+        }
+    }};
+}
+
+impl<'tag> TagRepr<'tag> {
     ///
-    /// Fetch a reference to the name of this tag. May not be present if the tag is of type
-    /// [`Tag::End`], present in a list, or the root [`Tag::Compound`] itself.
+    /// Macros need to access this function, so it's provided.
+    #[doc(hidden)]
     #[must_use]
-    pub fn name(&self) -> Option<&Cow<'a, str>> {
+    pub fn name(&self) -> Option<&Cow<'tag, str>> {
         match self {
-            Tag::End => None,
-            Tag::Byte(name, _)
-            | Tag::Short(name, _)
-            | Tag::Int(name, _)
-            | Tag::Long(name, _)
-            | Tag::Float(name, _)
-            | Tag::Double(name, _)
-            | Tag::ByteArray(name, _)
-            | Tag::String(name, _)
-            | Tag::List(name, _, _)
-            | Tag::Compound(name, _)
-            | Tag::IntArray(name, _)
-            | Tag::LongArray(name, _) => name.as_ref(),
+            TagRepr::End => None,
+            TagRepr::Byte(name, _)
+            | TagRepr::Short(name, _)
+            | TagRepr::Int(name, _)
+            | TagRepr::Long(name, _)
+            | TagRepr::Float(name, _)
+            | TagRepr::Double(name, _)
+            | TagRepr::ByteArray(name, _)
+            | TagRepr::String(name, _)
+            | TagRepr::List(name, _, _)
+            | TagRepr::Compound(name, _)
+            | TagRepr::IntArray(name, _)
+            | TagRepr::LongArray(name, _) => name.as_ref(),
         }
     }
 
-    ///
-    /// Fetch the identifier associated with the type of this tag.
-    #[must_use]
-    pub fn id(&self) -> u8 {
+    fn id(&self) -> u8 {
         match self {
-            Tag::End => TAG_END,
-            Tag::Byte(_, _) => TAG_BYTE,
-            Tag::Short(_, _) => TAG_SHORT,
-            Tag::Int(_, _) => TAG_INT,
-            Tag::Long(_, _) => TAG_LONG,
-            Tag::Float(_, _) => TAG_FLOAT,
-            Tag::Double(_, _) => TAG_DOUBLE,
-            Tag::ByteArray(_, _) => TAG_BYTE_ARRAY,
-            Tag::String(_, _) => TAG_STRING,
-            Tag::List(_, _, _) => TAG_LIST,
-            Tag::Compound(_, _) => TAG_COMPOUND,
-            Tag::IntArray(_, _) => TAG_INT_ARRAY,
-            Tag::LongArray(_, _) => TAG_LONG_ARRAY,
+            TagRepr::End => TAG_END,
+            TagRepr::Byte(_, _) => TAG_BYTE,
+            TagRepr::Short(_, _) => TAG_SHORT,
+            TagRepr::Int(_, _) => TAG_INT,
+            TagRepr::Long(_, _) => TAG_LONG,
+            TagRepr::Float(_, _) => TAG_FLOAT,
+            TagRepr::Double(_, _) => TAG_DOUBLE,
+            TagRepr::ByteArray(_, _) => TAG_BYTE_ARRAY,
+            TagRepr::String(_, _) => TAG_STRING,
+            TagRepr::List(_, _, _) => TAG_LIST,
+            TagRepr::Compound(_, _) => TAG_COMPOUND,
+            TagRepr::IntArray(_, _) => TAG_INT_ARRAY,
+            TagRepr::LongArray(_, _) => TAG_LONG_ARRAY,
         }
     }
 
-    ///
-    /// Adds a tag to this one. If the tag can't be added, it is returned to the caller. Otherwise,
-    /// returns `None`.
-    ///
-    /// If `self` isn't a [`Tag::List`] or [`Tag::Compound`], `tag` can't be added, and this method
-    /// will return `Some`. It will also return `Some` when `tag` is named and `self` is a
-    /// [`Tag::List`], or when adding an unnamed tag to a [`Tag::Compound`].
-    ///
-    /// If `replace` is true, and when `self` is a [`Tag::Compound`], the entry with the same name
-    /// as `tag` will be replaced, if present. If `replace` is false, such an entry would not be
-    /// updated, and this method will return Some to indicate that.
-    pub fn add(&mut self, tag: Tag<'a>, replace: bool) -> Option<Tag<'a>> {
+    fn add(&mut self, tag: TagRepr<'tag>, replace: bool) -> Option<TagRepr<'tag>> {
         match self {
-            Tag::List(_, _, storage) => {
-                if tag.name().is_some() {
-                    return Some(tag);
+            TagRepr::List(_, ty, storage) => {
+                if tag.name().is_some() || *ty != tag.id() {
+                    Some(tag)
+                } else {
+                    storage.push(tag);
+                    None
                 }
-
-                storage.push(tag);
-                None
             }
 
-            Tag::Compound(_, storage) => {
+            TagRepr::Compound(_, storage) => {
                 let key = tag.name()?.clone();
 
                 if replace {
@@ -588,33 +645,118 @@ impl<'a> Tag<'a> {
         }
     }
 
-    ///
-    /// Fetches a tag by following a sequence of [`TagKey`]s.
-    ///
-    /// If `keys` is empty, `self` is returned. Otherwise, each key is followed in turn to traverse
-    /// the data.
-    #[must_use]
-    pub fn get(&self, keys: &[TagKey]) -> Option<&Tag<'a>> {
+    fn get(&self, keys: &[TagKey]) -> Option<&TagRepr<'tag>> {
         tag_get_impl!(self, keys, get)
     }
 
-    ///
-    /// Mutable equivalent of [`Tag::get`].
-    pub fn get_mut(&mut self, keys: &[TagKey]) -> Option<&mut Tag<'a>> {
+    fn get_mut(&mut self, keys: &[TagKey]) -> Option<&mut TagRepr<'tag>> {
         tag_get_impl!(self, keys, get_mut)
     }
 
-    ///
-    /// Internal method for adding to container tags `TAG_List` and `TAG_Compound`. Panics if
-    /// adding a nameless tag when `self` is a compound, or if `self` isn't a container tag.
-    ///
-    /// These are conditions that are checked for by the parser, and so shouldn't ever happen
-    /// (barring bugs that should be fixed) so this is why we use this instead of the user-facing
-    /// method `self.add`.
-    pub(crate) fn add_internal(&mut self, tag: Tag<'a>) {
+    #[inline]
+    fn as_byte(&self) -> Option<i8> {
+        as_impl!(self, Byte).map(|n| *n)
+    }
+
+    #[inline]
+    fn as_short(&self) -> Option<i16> {
+        as_impl!(self, Short).map(|n| *n)
+    }
+
+    #[inline]
+    fn as_int(&self) -> Option<i32> {
+        as_impl!(self, Int).map(|n| *n)
+    }
+
+    #[inline]
+    fn as_long(&self) -> Option<i64> {
+        as_impl!(self, Long).map(|n| *n)
+    }
+
+    #[inline]
+    fn as_float(&self) -> Option<f32> {
+        as_impl!(self, Float).map(|n| *n)
+    }
+
+    #[inline]
+    fn as_double(&self) -> Option<f64> {
+        as_impl!(self, Double).map(|n| *n)
+    }
+
+    #[inline]
+    fn as_byte_array(&self) -> Option<&Cow<'tag, [u8]>> {
+        as_impl!(self, ByteArray)
+    }
+
+    #[inline]
+    fn as_string(&self) -> Option<&Cow<'tag, str>> {
+        as_impl!(self, String)
+    }
+
+    #[inline]
+    fn as_int_array(&self) -> Option<&Vec<i32>> {
+        as_impl!(self, IntArray)
+    }
+
+    #[inline]
+    fn as_long_array(&self) -> Option<&Vec<i64>> {
+        as_impl!(self, LongArray)
+    }
+
+    #[inline]
+    fn as_byte_mut(&mut self) -> Option<&mut i8> {
+        as_impl!(self, Byte)
+    }
+
+    #[inline]
+    fn as_short_mut(&mut self) -> Option<&mut i16> {
+        as_impl!(self, Short)
+    }
+
+    #[inline]
+    fn as_int_mut(&mut self) -> Option<&mut i32> {
+        as_impl!(self, Int)
+    }
+
+    #[inline]
+    fn as_long_mut(&mut self) -> Option<&mut i64> {
+        as_impl!(self, Long)
+    }
+
+    #[inline]
+    fn as_float_mut(&mut self) -> Option<&mut f32> {
+        as_impl!(self, Float)
+    }
+
+    #[inline]
+    fn as_double_mut(&mut self) -> Option<&mut f64> {
+        as_impl!(self, Double)
+    }
+
+    #[inline]
+    fn as_byte_array_mut(&mut self) -> Option<&Cow<'tag, [u8]>> {
+        as_impl!(self, ByteArray)
+    }
+
+    #[inline]
+    fn as_string_mut(&mut self) -> Option<&mut Cow<'tag, str>> {
+        as_impl!(self, String)
+    }
+
+    #[inline]
+    fn as_int_array_mut(&mut self) -> Option<&mut Vec<i32>> {
+        as_impl!(self, IntArray)
+    }
+
+    #[inline]
+    fn as_long_array_mut(&mut self) -> Option<&mut Vec<i64>> {
+        as_impl!(self, LongArray)
+    }
+
+    fn add_internal(&mut self, tag: TagRepr<'tag>) {
         match self {
-            Tag::List(_, _, storage) => storage.push(tag),
-            Tag::Compound(_, storage) => {
+            TagRepr::List(_, _, storage) => storage.push(tag),
+            TagRepr::Compound(_, storage) => {
                 let key = tag
                     .name()
                     .expect("tag must have a name when added to a compound")
@@ -626,6 +768,362 @@ impl<'a> Tag<'a> {
             _ => panic!("should have added to a TAG_List or TAG_Compound"),
         }
     }
+}
+
+enum TagIter<'elem, K, V: 'elem> {
+    List(core::slice::Iter<'elem, V>),
+    Map(hashbrown::hash_map::Values<'elem, K, V>),
+}
+
+enum TagIterMut<'elem, K, V: 'elem> {
+    List(core::slice::IterMut<'elem, V>),
+    Map(hashbrown::hash_map::ValuesMut<'elem, K, V>),
+}
+
+///
+/// Used for reference-to-reference conversion of `&TagRepr` to `&Tag`. Not public because `TagRepr`
+/// is an implementation detail.
+#[inline]
+fn repr_to_tag<'item, 'tag>(repr: &'item TagRepr<'tag>) -> &'item Tag<'tag> {
+    // SAFETY:
+    // - Tag is #[repr(transparent)] and it only contains TagRepr
+    // - this operation does not change the lifetimes whatsoever
+    unsafe {
+        &*(core::ptr::from_ref::<TagRepr<'tag>>(repr).cast::<Tag<'tag>>())
+    }
+}
+
+impl<'elem, 'tag, K> Iterator for TagIter<'elem, K, TagRepr<'tag>> {
+    type Item = &'elem Tag<'tag>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            TagIter::List(list) => list.next(),
+            TagIter::Map(values) => values.next(),
+        }
+        .map(repr_to_tag)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            TagIter::List(list) => list.size_hint(),
+            TagIter::Map(values) => values.size_hint(),
+        }
+    }
+}
+
+impl<'elem, 'tag, K> Iterator for TagIterMut<'elem, K, TagRepr<'tag>> {
+    type Item = TagAccess<'elem, 'tag>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            TagIterMut::List(list) => list.next(),
+            TagIterMut::Map(values) => values.next(),
+        }
+        .map(|repr| TagAccess { repr })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            TagIterMut::List(list) => list.size_hint(),
+            TagIterMut::Map(values) => values.size_hint(),
+        }
+    }
+}
+
+macro_rules! tag_methods {
+    () => {
+        ///
+        /// Gets an optional reference to the name of this tag. This will be `None` if the tag doesn't
+        /// have a name.
+        #[must_use]
+        pub fn name(&self) -> Option<&Cow<'tag, str>> {
+            self.repr.name()
+        }
+
+        ///
+        /// Gets the identifier of this tag.
+        #[must_use]
+        pub fn id(&self) -> u8 {
+            self.repr.id()
+        }
+
+        ///
+        /// Adds a tag to this one. If the tag can't be added, it is returned to the caller. Otherwise,
+        /// returns `None`.
+        ///
+        /// If `self` isn't a `TAG_List` or `TAG_Compound`, `tag` can't be added, and this method
+        /// will return `Some`. It will also return `Some` when `tag` is named and `self` is a
+        /// `TAG_List`, or when adding an unnamed tag to a `TAG_Compound`. Finally, when adding to
+        /// a list, the type of the tag being added must match the element type of the list.
+        ///
+        /// If `replace` is true, and when `self` is a `TAG_Compound`, the entry with the same name
+        /// as `tag` will be replaced, if present. If `replace` is false, such an entry would not be
+        /// updated, and this method will return Some to indicate that.
+        pub fn add(&mut self, tag: Tag<'tag>, replace: bool) -> Option<Tag<'tag>> {
+            let Tag { repr: tag } = tag;
+            self.repr.add(tag, replace).map(|repr| Tag { repr })
+        }
+
+        ///
+        /// Fetches a tag by following a sequence of [`TagKey`]s.
+        ///
+        /// If `keys` is empty, `self` is returned. Otherwise, each key is followed in turn to traverse
+        /// the data.
+        ///
+        /// You can use the [`keys`] macro to generate lists more easily.
+        #[must_use]
+        pub fn get(&self, keys: &[TagKey]) -> Option<&Tag<'tag>> {
+            self.repr.get(keys).map(repr_to_tag)
+        }
+
+        ///
+        /// Mutable equivalent of [`Tag::get`]. Note that this returns [`TagAccess`], which has all
+        /// of the same methods, but makes replacing the underlying tag impossible, since
+        /// `TagAccess` cannot be freely constructed. This is done to avoid ad hoc violations of
+        /// preconditions such as lists not containing named tags or compounds containing unnamed
+        /// ones.
+        #[must_use]
+        pub fn get_mut(&mut self, keys: &[TagKey]) -> Option<TagAccess<'_, 'tag>> {
+            self.repr.get_mut(keys).map(|repr| TagAccess { repr })
+        }
+
+        ///
+        /// Test if this tag is a `TAG_List` or not.
+        #[must_use]
+        pub fn is_list(&self) -> bool {
+            if let TagRepr::List(_, _, _) = &self.repr {
+                true
+            } else {
+                false
+            }
+        }
+
+        ///
+        /// Test if this tag is a `TAG_Compound` or not.
+        #[must_use]
+        pub fn is_compound(&self) -> bool {
+            if let TagRepr::Compound(_, _) = &self.repr {
+                true
+            } else {
+                false
+            }
+        }
+
+        ///
+        /// Test if this tag can contain other tags.
+        ///
+        /// Equivalent to `tag.is_list() || tag.is_compound()`.
+        #[must_use]
+        pub fn is_container(&self) -> bool {
+            match &self.repr {
+                TagRepr::List(_, _, _) |
+                TagRepr::Compound(_, _) => true,
+
+                _ => false
+            }
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_byte(&self) -> Option<i8> {
+            self.repr.as_byte()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_short(&self) -> Option<i16> {
+            self.repr.as_short()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_int(&self) -> Option<i32> {
+            self.repr.as_int()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_long(&self) -> Option<i64> {
+            self.repr.as_long()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_float(&self) -> Option<f32> {
+            self.repr.as_float()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_double(&self) -> Option<f64> {
+            self.repr.as_double()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_byte_array(&self) -> Option<&Cow<'tag, [u8]>> {
+            self.repr.as_byte_array()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_string(&self) -> Option<&Cow<'tag, str>> {
+            self.repr.as_string()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_int_array(&self) -> Option<&Vec<i32>> {
+            self.repr.as_int_array()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_long_array(&self) -> Option<&Vec<i64>> {
+            self.repr.as_long_array()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_byte_mut(&mut self) -> Option<&mut i8> {
+            self.repr.as_byte_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_short_mut(&mut self) -> Option<&mut i16> {
+            self.repr.as_short_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_int_mut(&mut self) -> Option<&mut i32> {
+            self.repr.as_int_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_long_mut(&mut self) -> Option<&mut i64> {
+            self.repr.as_long_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_float_mut(&mut self) -> Option<&mut f32> {
+            self.repr.as_float_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_double_mut(&mut self) -> Option<&mut f64> {
+            self.repr.as_double_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_byte_array_mut(&mut self) -> Option<&Cow<'tag, [u8]>> {
+            self.repr.as_byte_array_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_string_mut(&mut self) -> Option<&mut Cow<'tag, str>> {
+            self.repr.as_string_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_int_array_mut(&mut self) -> Option<&mut Vec<i32>> {
+            self.repr.as_int_array_mut()
+        }
+
+        ///
+        /// This is an `as_*` method. See the type-level documentation for an explanation.
+        #[must_use]
+        pub fn as_long_array_mut(&mut self) -> Option<&mut Vec<i64>> {
+            self.repr.as_long_array_mut()
+        }
+
+        ///
+        /// Optionally returns an iterator to the child tags of this one. Will yield `None` if this
+        /// tag isn't a list or compound.
+        ///
+        /// If present, the iterator may iterate either the values of a compound, or the entries of
+        /// a list.
+        #[must_use]
+        pub fn children(&self) -> Option<impl Iterator<Item = &Tag<'tag>>> {
+            match &self.repr {
+                TagRepr::List(_, _, storage) => Some(TagIter::List(storage.iter())),
+                TagRepr::Compound(_, storage) => Some(TagIter::Map(storage.values())),
+                _ => None,
+            }
+        }
+
+        ///
+        /// Works identically to `children`, but provides mutable access to the tags via
+        /// [`TagAccess`].
+        #[must_use]
+        pub fn children_mut(&mut self) -> Option<impl Iterator<Item = TagAccess<'_, 'tag>>> {
+            match &mut self.repr {
+                TagRepr::List(_, _, storage) => Some(TagIterMut::List(storage.iter_mut())),
+                TagRepr::Compound(_, storage) => Some(TagIterMut::Map(storage.values_mut())),
+                _ => None,
+            }
+        }
+    };
+}
+
+///
+/// Provides mutable access to a tag in a list or compound. This is used instead of just handing out
+/// `&mut Tag` because the latter could allow inserting invalid tags for the context (such as a
+/// named tag in a list, or an unnamed one in a compound).
+///
+/// All methods available on [`Tag`] exist on [`TagAccess`], too. See [`Tag`] for complete
+/// documentation and examples.
+#[derive(Debug, PartialEq)]
+#[repr(transparent)]
+pub struct TagAccess<'item, 'tag> {
+    repr: &'item mut TagRepr<'tag>,
+}
+
+impl PartialEq<Tag<'_>> for TagAccess<'_, '_> {
+    fn eq(&self, other: &Tag<'_>) -> bool {
+        (*self.repr).eq(&other.repr)
+    }
+}
+
+impl PartialEq<TagAccess<'_, '_>> for Tag<'_> {
+    fn eq(&self, other: &TagAccess<'_, '_>) -> bool {
+        self.repr.eq(&*other.repr)
+    }
+}
+
+impl<'tag> Tag<'tag> {
+    tag_methods! {}
+}
+
+impl<'tag> TagAccess<'_, 'tag> {
+    tag_methods! {}
 }
 
 ///
@@ -699,14 +1197,14 @@ impl From<NbtDeserializeError> for std::io::Error {
 }
 
 ///
-/// Deserializes "network variant" NBT.
+/// Deserializes "network variant" NBT. The root `TAG_Compound` doesn't have a name.
 ///
 /// # Errors
 /// If `bytes` contains invalid NBT data, an error will be returned.
 pub fn deserialize_network<'tag, 'data: 'tag>(
     bytes: &'data [u8],
 ) -> Result<Tag<'tag>, NbtDeserializeError> {
-    deserialize_internal::<true>(bytes)
+    deserialize_internal::<true>(bytes).map(|repr| Tag { repr })
 }
 
 ///
@@ -717,12 +1215,13 @@ pub fn deserialize_network<'tag, 'data: 'tag>(
 pub fn deserialize_file<'tag, 'data: 'tag>(
     bytes: &'data [u8],
 ) -> Result<Tag<'tag>, NbtDeserializeError> {
-    deserialize_internal::<false>(bytes)
+    deserialize_internal::<false>(bytes).map(|repr| Tag { repr })
 }
 
+#[allow(clippy::too_many_lines, reason = "This function uses a lot of inline macros.")]
 fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
     mut bytes: &'data [u8],
-) -> Result<Tag<'tag>, NbtDeserializeError> {
+) -> Result<TagRepr<'tag>, NbtDeserializeError> {
     enum ContainerFlow {
         Map,
         List(usize),
@@ -787,8 +1286,14 @@ fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
 
             let __len = length_prefix!();
 
-            #[allow(clippy::cast_possible_wrap, reason = "We cast back to i32 to get the original value")]
-            #[allow(clippy::cast_possible_truncation, reason = "We never actually overflow an i32")]
+            #[allow(
+                clippy::cast_possible_wrap,
+                reason = "We cast back to i32 to get the original value"
+            )]
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "We never actually overflow an i32"
+            )]
             let __len_bytes = __len
                 .checked_shl(__SHIFT)
                 .ok_or(NbtDeserializeError::InvalidLengthPrefix(__len as i32))?;
@@ -833,7 +1338,7 @@ fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
             )
         };
 
-        Tag::Compound(name, HashMap::default())
+        TagRepr::Compound(name, hashbrown::HashMap::default())
     };
 
     let mut ctx_stack = array_stack::ArrayStack::<_, DEPTH_LIMIT>::new();
@@ -846,8 +1351,8 @@ fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
         let target_len = *target_len;
 
         let (ty, name, old_len) = match &ctx {
-            Tag::List(_, ty, storage) => (*ty, None, storage.len()),
-            Tag::Compound(_, storage) => {
+            TagRepr::List(_, ty, storage) => (*ty, None, storage.len()),
+            TagRepr::Compound(_, storage) => {
                 let ty = next_ty!();
 
                 if ty == TAG_END {
@@ -886,15 +1391,15 @@ fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
 
         let mut flow = ContainerFlow::None;
         let tag = match ty {
-            TAG_END => Tag::End,
-            TAG_BYTE => Tag::Byte(name, i8::from_be_bytes(*next_n!(1))),
-            TAG_SHORT => Tag::Short(name, i16::from_be_bytes(*next_n!(2))),
-            TAG_INT => Tag::Int(name, i32::from_be_bytes(*next_n!(4))),
-            TAG_LONG => Tag::Long(name, i64::from_be_bytes(*next_n!(8))),
-            TAG_FLOAT => Tag::Float(name, f32::from_be_bytes(*next_n!(4))),
-            TAG_DOUBLE => Tag::Double(name, f64::from_be_bytes(*next_n!(8))),
-            TAG_BYTE_ARRAY => Tag::ByteArray(name, Cow::Borrowed(next_n!(length_prefix!()))),
-            TAG_STRING => Tag::String(
+            TAG_END => TagRepr::End,
+            TAG_BYTE => TagRepr::Byte(name, i8::from_be_bytes(*next_n!(1))),
+            TAG_SHORT => TagRepr::Short(name, i16::from_be_bytes(*next_n!(2))),
+            TAG_INT => TagRepr::Int(name, i32::from_be_bytes(*next_n!(4))),
+            TAG_LONG => TagRepr::Long(name, i64::from_be_bytes(*next_n!(8))),
+            TAG_FLOAT => TagRepr::Float(name, f32::from_be_bytes(*next_n!(4))),
+            TAG_DOUBLE => TagRepr::Double(name, f64::from_be_bytes(*next_n!(8))),
+            TAG_BYTE_ARRAY => TagRepr::ByteArray(name, Cow::Borrowed(next_n!(length_prefix!()))),
+            TAG_STRING => TagRepr::String(
                 name,
                 mutf::from_mutf8(next_n!(u16::from_be_bytes(*next_n!(2)) as usize))
                     .ok_or(NbtDeserializeError::InvalidMUTF8)?,
@@ -909,14 +1414,14 @@ fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
                     return Err(NbtDeserializeError::NonEmptyTagEndList);
                 }
 
-                Tag::List(name, list_ty, Vec::with_capacity(len))
+                TagRepr::List(name, list_ty, Vec::with_capacity(len))
             }
             TAG_COMPOUND => {
                 flow = ContainerFlow::Map;
-                Tag::Compound(name, HashMap::default())
+                TagRepr::Compound(name, hashbrown::HashMap::default())
             }
-            TAG_INT_ARRAY => Tag::IntArray(name, array_storage!(i32)),
-            TAG_LONG_ARRAY => Tag::LongArray(name, array_storage!(i64)),
+            TAG_INT_ARRAY => TagRepr::IntArray(name, array_storage!(i32)),
+            TAG_LONG_ARRAY => TagRepr::LongArray(name, array_storage!(i64)),
 
             _ => panic!("tag type returned by next_ty! should have been in range 0..=12"),
         };
@@ -938,7 +1443,7 @@ fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
                     // finished is the same tag as ctx, but owned now
                     let (_, mut finished) = ctx_stack.pop().unwrap();
 
-                    if let Tag::Compound(_, storage) = &mut finished {
+                    if let TagRepr::Compound(_, storage) = &mut finished {
                         // maps aren't precisely pre-sized because we don't have a length prefix
                         // so we shrink them after they've been filled in
                         storage.shrink_to_fit();
@@ -976,8 +1481,7 @@ fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{deserialize_internal, Tag};
-    use alloc::borrow::Cow;
+    use crate::{deserialize_file, deserialize_network};
     use alloc::vec::Vec;
     use std::io::Read;
 
@@ -993,18 +1497,11 @@ mod tests {
             0x00, // TAG_End
         ];
 
-        let expected = Tag::Compound(
-            None,
-            [(
-                Cow::Borrowed("name"),
-                Tag::String(Some(Cow::Borrowed("name")), Cow::Borrowed("Bananrama")),
-            )]
-            .into_iter()
-            .collect(),
-        );
+        let expected = tag!(Compound: {
+            String["name"]: "Bananrama"
+        });
 
-        let tag = deserialize_internal::<true>(&data).expect("tag should have been valid");
-
+        let tag = deserialize_network(&data).expect("tag should have been valid");
         assert_eq!(expected, tag);
     }
 
@@ -1019,14 +1516,56 @@ mod tests {
             .read_to_end(&mut decompressed)
             .expect("expected valid GZIP data");
 
-        let tag = deserialize_internal::<false>(&decompressed).expect("tag should have been valid");
-    }
+        let tag = deserialize_file(&decompressed).expect("tag should have been valid");
 
-    #[test]
-    fn test() {
-        let tag = Tag::Compound(
-            Some(Cow::Borrowed("test")),
-            hashbrown::HashMap::from([(Cow::Borrowed("test"), Tag::End)]),
-        );
+        let mut bytes = Vec::with_capacity(1000);
+        for i in 0usize..=999 {
+            let result = i
+                .wrapping_mul(i)
+                .wrapping_mul(255)
+                .wrapping_add(i.wrapping_mul(7));
+            bytes.push((result % 100) as u8);
+        }
+
+        let bytes_tag = tag.get(&keys!({"byteArrayTest (the first 1000 values of (n*n*255+n*7)%100, starting with n=0 (0, 62, 34, 16, 8, ...))"})).expect("should have had bytes key");
+        let tag_bytes = bytes_tag.as_byte_array().expect("expected byte array type");
+
+        assert_eq!(&bytes[..], tag_bytes.as_ref());
+
+        let expected = tag!(Compound["Level"]: {
+            Compound["nested compound test"]: {
+                Compound["egg"]: {
+                    String["name"]: "Eggbert",
+                    Float["value"]: 0.5
+                },
+                Compound["ham"]: {
+                    String["name"]: "Hampus",
+                    Float["value"]: 0.75
+                }
+            },
+            Int["intTest"]: 2147483647,
+            Byte["byteTest"]: 127,
+            String["stringTest"]: "HELLO WORLD THIS IS A TEST STRING ÅÄÖ!",
+            Long List["listTest (long)"]: [
+                11, 12, 13, 14, 15
+            ],
+            Double["doubleTest"]: 0.49312871321823148,
+            Float["floatTest"]: 0.49823147058486938,
+            Long["longTest"]: 9223372036854775807,
+            Compound List["listTest (compound)"]: [
+                {
+                    Long["created-on"]: 1264099775885,
+                    String["name"]: "Compound tag #0"
+                },
+                {
+                    Long["created-on"]: 1264099775885,
+                    String["name"]: "Compound tag #1"
+                }
+            ],
+            ByteArray["byteArrayTest (the first 1000 values of (n*n*255+n*7)%100, starting with n=0 (0, 62, 34, 16, 8, ...))"]: bytes,
+            Short["shortTest"]: 32767
+        });
+
+        assert_eq!(expected, tag);
     }
 }

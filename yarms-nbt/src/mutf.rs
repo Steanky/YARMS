@@ -79,10 +79,16 @@ pub fn into_mutf8(str: &str) -> Cow<[u8]> {
                     u32::from(char::from_str(substr).unwrap_unchecked()) - 0x10000
                 };
 
-                #[allow(clippy::cast_possible_truncation, reason = "Truncation is deliberate here")]
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "Truncation is deliberate here"
+                )]
                 let hi = ((char >> 10) | 0xD800) as u16;
 
-                #[allow(clippy::cast_possible_truncation, reason = "Truncation is deliberate here")]
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "Truncation is deliberate here"
+                )]
                 let lo = ((char & 0x3FF) | 0xDC00) as u16;
 
                 let hi = encode_cesu_surrogate(hi);
@@ -142,6 +148,10 @@ pub fn into_mutf8(str: &str) -> Cow<[u8]> {
 /// # Panics
 /// This function will only panic if there is an internal bug or allocation failure.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "This function uses in-line macros for parsing; not much can be extracted without changing semantics"
+)]
 pub fn from_mutf8(bytes: &[u8]) -> Option<Cow<str>> {
     const USIZE_BYTES: usize = size_of::<usize>();
     const ASCII_BLOCK_SIZE: usize = 2 * USIZE_BYTES;
@@ -203,7 +213,10 @@ pub fn from_mutf8(bytes: &[u8]) -> Option<Cow<str>> {
                     // SAFETY:
                     // `pos` is aligned as we just checked that it's divisible by USIZE_BYTES
                     // dereferencing `block`, therefore, is safe
-                    #[allow(clippy::cast_ptr_alignment, reason = "We check for alignment with usize")]
+                    #[allow(
+                        clippy::cast_ptr_alignment,
+                        reason = "We check for alignment with usize"
+                    )]
                     unsafe {
                         let block = ptr.add(pos).cast::<usize>();
 
@@ -398,7 +411,6 @@ mod tests {
     use crate::mutf::{from_mutf8, into_mutf8, IS_TEST};
     use alloc::borrow::Cow;
     use alloc::vec::Vec;
-    use std::io::Read;
     use std::prelude::v1::String;
     use std::vec;
 
