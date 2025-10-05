@@ -283,7 +283,18 @@ impl Debug for TagRepr<'_> {
             }
             TagRepr::String(name, string) => debug_tag(f, "TAG_String", name, string),
             TagRepr::List(name, _, list) => debug_tag(f, "TAG_List", name, list),
-            TagRepr::Compound(name, compound) => debug_tag(f, "TAG_Compound", name, compound),
+            TagRepr::Compound(name, compound) => {
+                let mut debug = match name {
+                    None => f.debug_tuple("TAG_Compound"),
+                    Some(name) => f.debug_tuple(format!("TAG_Compound[{name}]").as_ref())
+                };
+
+                for value in compound.values() {
+                    debug.field(value);
+                }
+
+                debug.finish()
+            },
             TagRepr::IntArray(name, int_array) => debug_tag(f, "TAG_Int_Array", name, int_array),
             TagRepr::LongArray(name, long_array) => {
                 debug_tag(f, "TAG_Long_Array", name, long_array)
@@ -1289,6 +1300,7 @@ mod tests {
     use crate::{deserialize_file, deserialize_network, keys, tag};
     use alloc::vec::Vec;
     use std::io::Read;
+    use std::println;
 
     // adapted from https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/NBT#Specification
     #[test]
@@ -1372,5 +1384,6 @@ mod tests {
         });
 
         assert_eq!(expected, tag);
+        println!("{:#?}", expected);
     }
 }
