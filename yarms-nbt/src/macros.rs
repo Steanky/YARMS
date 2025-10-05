@@ -1,7 +1,7 @@
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __keys {
-    ( {$v:expr} ) => {
+    ( { $v:expr } ) => {
         $crate::TagKey::Name($v)
     };
 
