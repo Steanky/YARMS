@@ -160,58 +160,58 @@ macro_rules! __tag_name {
     };
 
     ( $e:expr ) => {
-        core::option::Option::Some($crate::alloc::borrow::Cow::Borrowed($e.into()))
+        core::option::Option::Some($crate::alloc::borrow::Cow::Borrowed($e))
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __tag_repr {
-    ( Byte$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( Byte $( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
         $crate::TagRepr::Byte($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
     };
 
-    ( Short$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( Short $( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
         $crate::TagRepr::Short($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
     };
 
-    ( Int$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( Int $( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
         $crate::TagRepr::Int($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
     };
 
-    ( Long$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( Long $( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
         $crate::TagRepr::Long($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
     };
 
-    ( Float$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( Float $( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
         $crate::TagRepr::Float($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
     };
 
-    ( Double$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( Double $( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
         $crate::TagRepr::Double($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
     };
 
-    ( ByteArray$( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
+    ( ByteArray $( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
         $crate::TagRepr::ByteArray($crate::__tag_name!($( $( $tag_name )+ )?),
         $crate::__tag_value!($tag_value))
     };
 
-    ( String$( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
+    ( String $( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
         $crate::TagRepr::String($crate::__tag_name!($( $( $tag_name )+ )?),
         $crate::__tag_value!($tag_value))
     };
 
-    ( IntArray$( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
+    ( IntArray $( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
         $crate::TagRepr::IntArray($crate::__tag_name!($( $( $tag_name )+ )?),
         $crate::__tag_value!($tag_value))
     };
 
-    ( LongArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( LongArray $( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
         $crate::TagRepr::LongArray($crate::__tag_name!($( $( $tag_name )+ )?),
         $crate::__tag_value!($tag_value))
     };
 
-    ( Compound$( [$( $tag_name:tt )+] )? : { $( $tag_value:tt )* } ) => {
+    ( Compound $( [$( $tag_name:tt )+] )? : { $( $tag_value:tt )* } ) => {
         $crate::TagRepr::Compound($crate::__tag_name!($( $( $tag_name )+ )?),
         $crate::__hash_map::HashMap::from($crate::__gen_compound_array!($( $tag_value )*)))
     };
