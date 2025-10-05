@@ -1,5 +1,9 @@
 //!
 //! Support for NBT (named binary tag) format as used by Minecraft. `no-std` compatible.
+//!
+//! # Features
+//! * `std` (default): Currently only enables [`NbtDeserializeError`] -> `std::io::Error`
+//!   conversion.
 
 #![no_std]
 
@@ -147,21 +151,25 @@ macro_rules! __tag_name {
         core::option::Option::Some($crate::alloc::borrow::Cow::Borrowed($e))
     };
 
-    ( $e:expr ) => {
+    ( $e:ident ) => {
+        core::option::Option::Some($crate::alloc::borrow::Cow::Borrowed(&$e))
+    };
+
+    ( $e:block ) => {
         core::option::Option::Some($crate::alloc::borrow::Cow::Owned($e.into()))
     };
 
-    ( ref $e:expr ) => {
-        core::option::Option::Some($crate::alloc::borrow::Cow::Borrowed($e))
+    ( $e:expr ) => {
+        core::option::Option::Some($crate::alloc::borrow::Cow::Borrowed($e.into()))
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __gen_list_array {
-    ( $element_type:ident, ) => {{
+    ( $element_type:ident, ) => {
         [$crate::TagRepr::End; 0]
-    }};
+    };
 
     ( $element_type:ident, $( $sublist_type:ident : $value:tt ),+ ) => {[
         $({
@@ -177,17 +185,23 @@ macro_rules! __gen_list_array {
 }
 
 #[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn __pair(tag: TagRepr) -> (Cow<str>, TagRepr) {
+    (tag.name().unwrap().clone(), tag)
+}
+
+#[doc(hidden)]
 #[macro_export]
 macro_rules! __gen_compound_array {
-    () => {{
+    () => {
         [($crate::alloc::borrow::Cow::Borrowed(""), $crate::TagRepr::End); 0]
-    }};
+    };
 
     ( $( $tag_type:ident $( $list:ident )? [$( $tag_name:tt )+] : $value:tt ),+ ) => {[
-        $({
-            let tag = $crate::__tag_repr!($tag_type $( $list )? [$( $tag_name )+] : $value );
-            (tag.name().unwrap().clone(), tag)
-        }),+
+        $(
+            $crate::__pair($crate::__tag_repr!($tag_type $( $list )? [$( $tag_name )+] : $value ))
+        ),+
     ]};
 }
 
@@ -237,6 +251,26 @@ macro_rules! __resolve_ty {
 
 #[doc(hidden)]
 #[macro_export]
+macro_rules! __tag_value {
+    ( $lit:literal ) => {
+        $crate::alloc::borrow::Cow::Borrowed($lit)
+    };
+
+    ( $ex:ident ) => {
+        $crate::alloc::borrow::Cow::Borrowed(&$ex)
+    };
+
+    ( $b:block ) => {
+        $crate::alloc::borrow::Cow::Owned($b.into())
+    };
+
+    ( $ex:expr ) => {
+        $crate::alloc::borrow::Cow::Borrowed($ex)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
 macro_rules! __tag_repr {
     ( Byte$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
         $crate::TagRepr::Byte($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
@@ -262,22 +296,24 @@ macro_rules! __tag_repr {
         $crate::TagRepr::Double($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value)
     };
 
-    ( ByteArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( ByteArray$( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
         $crate::TagRepr::ByteArray($crate::__tag_name!($( $( $tag_name )+ )?),
-        $crate::alloc::borrow::Cow::Owned($tag_value.into()))
+        $crate::__tag_value!($tag_value))
     };
 
-    ( String$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
+    ( String$( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
         $crate::TagRepr::String($crate::__tag_name!($( $( $tag_name )+ )?),
-        $crate::alloc::borrow::Cow::Owned($tag_value.into()))
+        $crate::__tag_value!($tag_value))
     };
 
-    ( IntArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
-        $crate::TagRepr::IntArray($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value.into())
+    ( IntArray$( [$( $tag_name:tt )+] )? : $tag_value:tt ) => {
+        $crate::TagRepr::IntArray($crate::__tag_name!($( $( $tag_name )+ )?),
+        $crate::__tag_value!($tag_value))
     };
 
     ( LongArray$( [$( $tag_name:tt )+] )? : $tag_value:expr ) => {
-        $crate::TagRepr::LongArray($crate::__tag_name!($( $( $tag_name )+ )?), $tag_value.into())
+        $crate::TagRepr::LongArray($crate::__tag_name!($( $( $tag_name )+ )?),
+        $crate::__tag_value!($tag_value))
     };
 
     ( Compound$( [$( $tag_name:tt )+] )? : { $( $tag_value:tt )* } ) => {
@@ -293,7 +329,9 @@ macro_rules! __tag_repr {
 }
 
 ///
-/// Easy way of constructing predefined [`Tag`] variants in code.
+/// This macro provides a way of constructing predefined [`Tag`] variants in code, without the
+/// requirement of runtime parsing. This is the only supported way, aside from deserialization, of
+/// constructing ad hoc tags.
 ///
 /// ```
 /// use yarms_nbt::{keys, tag};
@@ -318,10 +356,58 @@ macro_rules! __tag_repr {
 /// assert_eq!("hello", tag.as_string().expect("tag should be a string"));
 ///
 /// ```
+///
+/// # Borrowing rules
+/// This macro attempts to use borrowed, rather than owned, data whenever possible. In many cases
+/// this is entirely transparent: for example, string literals are always borrowed (thus avoiding
+/// wasteful allocation), but since these are implicitly `'static`, lifetime issues can't really
+/// crop up.
+///
+/// However, sometimes it is not desirable to borrow variables. The simplest case is to avoid
+/// compiler errors when trying to return a tag that was constructed with a local variable in a
+/// function. This can be accomplished by encasing the variable in a block, which causes the result
+/// of the block to converted to the owned variant using its [`Into`] trait:
+///
+/// ```
+/// use std::borrow::Cow;
+/// use yarms_nbt::{keys, tag, Tag};
+///
+/// fn example() -> Tag<'static> {
+///     let name = String::from("hello");
+///
+///     // The curly braces around `name` cause the variable to be moved.
+///     // Without these, we'd get an E0515 compiler error!
+///     let tag_using_local_var = tag!(Compound[{name}]: {
+///         Byte["test"]: 1,
+///         String["test2"]: {"this string is owned too, because it's in a block!"}
+///     });
+///
+///     tag_using_local_var
+/// }
+///
+/// let example = example();
+///
+/// // Check that the name of the example TAG_Compound is the owned variant.
+/// if let Some(Cow::Owned(string)) = example.name() {
+///     assert_eq!(string, "hello")
+/// } else {
+///     panic!("example should have been owned and named")
+/// }
+///
+/// let test_byte = example.get(&keys!({"test"})).expect("tag should have existed");
+///
+/// // Check that the name of the byte "test" is a borrowed variant.
+/// if let Some(Cow::Borrowed(string)) = test_byte.name() {
+///     assert_eq!(*string, "test");
+/// } else {
+///     panic!("test_byte should have been borrowed and named");
+/// }
+/// ```
+///
 #[macro_export]
 macro_rules! tag {
     ( $( $everything:tt )* ) => {
-        $crate::__wrap_nbt($crate::__tag_repr!($( $everything )*))
+        $crate::__wrap($crate::__tag_repr!($( $everything )*))
     };
 }
 
@@ -332,7 +418,7 @@ macro_rules! tag {
     reason = "This is public for macro access, and hidden as it's not meant to be used."
 )]
 #[must_use]
-pub fn __wrap_nbt(repr: TagRepr) -> Tag {
+pub fn __wrap(repr: TagRepr) -> Tag {
     Tag { repr }
 }
 
@@ -448,7 +534,7 @@ pub struct Tag<'a> {
 }
 
 ///
-/// Internal representation of a tag. Private to prevent constructing arbitrary (invalid) tags.
+/// Internal representation of a tag. Should not be accessed by end users.
 ///
 /// This enum may be transmuted to [`Tag`].
 #[derive(Clone, PartialEq)]
@@ -465,8 +551,8 @@ pub enum TagRepr<'a> {
     String(Name<'a>, Cow<'a, str>),
     List(Name<'a>, u8, Vec<TagRepr<'a>>),
     Compound(Name<'a>, hashbrown::HashMap<Cow<'a, str>, TagRepr<'a>>),
-    IntArray(Name<'a>, Vec<i32>),
-    LongArray(Name<'a>, Vec<i64>),
+    IntArray(Name<'a>, Cow<'a, [i32]>),
+    LongArray(Name<'a>, Cow<'a, [i64]>),
 }
 
 ///
@@ -694,12 +780,12 @@ impl<'tag> TagRepr<'tag> {
     }
 
     #[inline]
-    fn as_int_array(&self) -> Option<&Vec<i32>> {
+    fn as_int_array(&self) -> Option<&Cow<'tag, [i32]>> {
         as_impl!(self, IntArray)
     }
 
     #[inline]
-    fn as_long_array(&self) -> Option<&Vec<i64>> {
+    fn as_long_array(&self) -> Option<&Cow<'tag, [i64]>> {
         as_impl!(self, LongArray)
     }
 
@@ -744,12 +830,12 @@ impl<'tag> TagRepr<'tag> {
     }
 
     #[inline]
-    fn as_int_array_mut(&mut self) -> Option<&mut Vec<i32>> {
+    fn as_int_array_mut(&mut self) -> Option<&mut Cow<'tag, [i32]>> {
         as_impl!(self, IntArray)
     }
 
     #[inline]
-    fn as_long_array_mut(&mut self) -> Option<&mut Vec<i64>> {
+    fn as_long_array_mut(&mut self) -> Option<&mut Cow<'tag, [i64]>> {
         as_impl!(self, LongArray)
     }
 
@@ -788,9 +874,7 @@ fn repr_to_tag<'item, 'tag>(repr: &'item TagRepr<'tag>) -> &'item Tag<'tag> {
     // SAFETY:
     // - Tag is #[repr(transparent)] and it only contains TagRepr
     // - this operation does not change the lifetimes whatsoever
-    unsafe {
-        &*(core::ptr::from_ref::<TagRepr<'tag>>(repr).cast::<Tag<'tag>>())
-    }
+    unsafe { &*(core::ptr::from_ref::<TagRepr<'tag>>(repr).cast::<Tag<'tag>>()) }
 }
 
 impl<'elem, 'tag, K> Iterator for TagIter<'elem, K, TagRepr<'tag>> {
@@ -808,6 +892,15 @@ impl<'elem, 'tag, K> Iterator for TagIter<'elem, K, TagRepr<'tag>> {
         match self {
             TagIter::List(list) => list.size_hint(),
             TagIter::Map(values) => values.size_hint(),
+        }
+    }
+}
+
+impl<K> ExactSizeIterator for TagIter<'_, K, TagRepr<'_>> {
+    fn len(&self) -> usize {
+        match self {
+            TagIter::List(inner) => inner.len(),
+            TagIter::Map(inner) => inner.len(),
         }
     }
 }
@@ -831,11 +924,22 @@ impl<'elem, 'tag, K> Iterator for TagIterMut<'elem, K, TagRepr<'tag>> {
     }
 }
 
+impl<K> ExactSizeIterator for TagIterMut<'_, K, TagRepr<'_>> {
+    fn len(&self) -> usize {
+        match self {
+            TagIterMut::List(inner) => inner.len(),
+            TagIterMut::Map(inner) => inner.len(),
+        }
+    }
+}
+
 macro_rules! tag_methods {
     () => {
         ///
         /// Gets an optional reference to the name of this tag. This will be `None` if the tag doesn't
         /// have a name.
+        ///
+        /// It is not possible to change a tag's name.
         #[must_use]
         pub fn name(&self) -> Option<&Cow<'tag, str>> {
             self.repr.name()
@@ -917,10 +1021,9 @@ macro_rules! tag_methods {
         #[must_use]
         pub fn is_container(&self) -> bool {
             match &self.repr {
-                TagRepr::List(_, _, _) |
-                TagRepr::Compound(_, _) => true,
+                TagRepr::List(_, _, _) | TagRepr::Compound(_, _) => true,
 
-                _ => false
+                _ => false,
             }
         }
 
@@ -983,14 +1086,14 @@ macro_rules! tag_methods {
         ///
         /// This is an `as_*` method. See the type-level documentation for an explanation.
         #[must_use]
-        pub fn as_int_array(&self) -> Option<&Vec<i32>> {
+        pub fn as_int_array(&self) -> Option<&Cow<'tag, [i32]>> {
             self.repr.as_int_array()
         }
 
         ///
         /// This is an `as_*` method. See the type-level documentation for an explanation.
         #[must_use]
-        pub fn as_long_array(&self) -> Option<&Vec<i64>> {
+        pub fn as_long_array(&self) -> Option<&Cow<'tag, [i64]>> {
             self.repr.as_long_array()
         }
 
@@ -1053,25 +1156,26 @@ macro_rules! tag_methods {
         ///
         /// This is an `as_*` method. See the type-level documentation for an explanation.
         #[must_use]
-        pub fn as_int_array_mut(&mut self) -> Option<&mut Vec<i32>> {
+        pub fn as_int_array_mut(&mut self) -> Option<&mut Cow<'tag, [i32]>> {
             self.repr.as_int_array_mut()
         }
 
         ///
         /// This is an `as_*` method. See the type-level documentation for an explanation.
         #[must_use]
-        pub fn as_long_array_mut(&mut self) -> Option<&mut Vec<i64>> {
+        pub fn as_long_array_mut(&mut self) -> Option<&mut Cow<'tag, [i64]>> {
             self.repr.as_long_array_mut()
         }
 
         ///
         /// Optionally returns an iterator to the child tags of this one. Will yield `None` if this
-        /// tag isn't a list or compound.
+        /// tag isn't a list or compound. Will yield `Some` containing an empty iterator if `self`
+        /// is an empty list or compound.
         ///
         /// If present, the iterator may iterate either the values of a compound, or the entries of
         /// a list.
         #[must_use]
-        pub fn children(&self) -> Option<impl Iterator<Item = &Tag<'tag>>> {
+        pub fn children(&self) -> Option<impl ExactSizeIterator<Item = &Tag<'tag>>> {
             match &self.repr {
                 TagRepr::List(_, _, storage) => Some(TagIter::List(storage.iter())),
                 TagRepr::Compound(_, storage) => Some(TagIter::Map(storage.values())),
@@ -1083,10 +1187,95 @@ macro_rules! tag_methods {
         /// Works identically to `children`, but provides mutable access to the tags via
         /// [`TagAccess`].
         #[must_use]
-        pub fn children_mut(&mut self) -> Option<impl Iterator<Item = TagAccess<'_, 'tag>>> {
+        pub fn children_mut(
+            &mut self,
+        ) -> Option<impl ExactSizeIterator<Item = TagAccess<'_, 'tag>>> {
             match &mut self.repr {
                 TagRepr::List(_, _, storage) => Some(TagIterMut::List(storage.iter_mut())),
                 TagRepr::Compound(_, storage) => Some(TagIterMut::Map(storage.values_mut())),
+                _ => None,
+            }
+        }
+
+        ///
+        /// Gets the number of elements contained in this tag, if it is a container.
+        ///
+        /// Note that this does _not_ return `Some` if the tag is a `TAG_Byte_Array`,
+        /// `TAG_Int_Array`, `TAG_Long_Array`, or `TAG_String`. It is only meant to fetch the number
+        /// of direct child tags contained in a `TAG_List` or `TAG_Compound`.
+        #[must_use]
+        pub fn len(&self) -> Option<usize> {
+            match &self.repr {
+                TagRepr::List(_, _, storage) => Some(storage.len()),
+                TagRepr::Compound(_, storage) => Some(storage.len()),
+                _ => None,
+            }
+        }
+
+        ///
+        /// Tests if this tag is an empty container.
+        ///
+        /// Returns `None` if this tag isn't a container. Returns `Some(true)` if this tag is an
+        /// empty container, and `Some(false)` if it has at least one element.
+        #[must_use]
+        pub fn is_empty(&self) -> Option<bool> {
+            self.len().map(|len| len == 0)
+        }
+
+        ///
+        /// Updates a list's element type, if it is possible to do so while upholding the following
+        /// invariants:
+        /// * The new type cannot differ from the types of any elements already in the list
+        /// * The new type must be in range `0..=12`
+        /// * `self` must actually be a `TAG_List`
+        ///
+        /// In practice, this means that only an empty list's type may be changed. Note that you
+        /// can actually set the element type to [`TAG_END`], though doing so will effectively
+        /// prevent any elements from being added, since `TAG_End` is a special case that cannot be
+        /// constructed ad hoc.
+        ///
+        /// Returns true if the list's type was successfully _changed_.
+        ///
+        /// ```
+        /// use yarms_nbt::{tag, TAG_DOUBLE};
+        ///
+        /// let mut tag = tag!(Int List: [ ]);
+        ///
+        /// // can't add doubles to an Int list...
+        /// assert!(tag.add(tag!(Double: 10.0), false).is_some());
+        /// assert!(tag.update_list_type(TAG_DOUBLE), "tag is an empty list so this will work");
+        ///
+        /// // now we successfully added the tag
+        /// assert!(tag.add(tag!(Double: 10.0), false).is_none());
+        ///
+        /// ```
+        pub fn update_list_type(&mut self, new_ty: u8) -> bool {
+            if !(0..=12).contains(&new_ty) {
+                return false;
+            }
+
+            match &mut self.repr {
+                TagRepr::List(_, ty, storage) => {
+                    if storage.is_empty() && *ty != new_ty {
+                        *ty = new_ty;
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                _ => false,
+            }
+        }
+
+        ///
+        /// Gets the element type, which will be present if we are a list, absent if not.
+        ///
+        /// The returned value will be in range `0..=12`.
+        #[must_use]
+        pub fn get_list_type(&self) -> Option<u8> {
+            match &self.repr {
+                TagRepr::List(_, ty, _) => Some(*ty),
                 _ => None,
             }
         }
@@ -1218,7 +1407,11 @@ pub fn deserialize_file<'tag, 'data: 'tag>(
     deserialize_internal::<false>(bytes).map(|repr| Tag { repr })
 }
 
-#[allow(clippy::too_many_lines, reason = "This function uses a lot of inline macros.")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "This function uses a lot of inline macros."
+)]
+#[inline]
 fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
     mut bytes: &'data [u8],
 ) -> Result<TagRepr<'tag>, NbtDeserializeError> {
@@ -1309,7 +1502,7 @@ fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
                 ));
             }
 
-            __storage
+            alloc::borrow::Cow::Owned(__storage)
         }};
     }
 
