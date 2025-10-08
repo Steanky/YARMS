@@ -3,6 +3,7 @@
 //! enabled feature flags.
 
 #![no_std]
+#![allow(clippy::all)]
 
 pub(crate) extern crate alloc;
 

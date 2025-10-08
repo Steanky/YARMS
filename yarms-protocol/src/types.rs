@@ -34,7 +34,6 @@ use core::borrow::Borrow;
 use core::fmt::Debug;
 use core::ops::Deref;
 use core::ops::DerefMut;
-use core::panic::AssertUnwindSafe;
 
 ///
 /// Maximum number of bytes needed to encode a single [`VarInt`], always equal to `5`.
@@ -905,7 +904,7 @@ where
                     T::read_from(read, end_remaining)
                 } else {
                     // this is unnecessary for soundness... but it's nice to not leak memory
-                    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         T::read_from(read, end_remaining)
                     })) {
                         Ok(res) => res,

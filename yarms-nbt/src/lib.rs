@@ -122,7 +122,8 @@ pub fn __wrap(repr: TagRepr) -> Tag {
 ///
 /// Tags have an associated lifetime, which allows variants that need it to borrow directly from an
 /// underlying byte slice. This can significantly cut down on allocations, though the tag will be
-/// bound to the lifetime of the storage. Tags can be cloned if a longer lifetime is needed.
+/// bound to the lifetime of the storage. Tags can be converted into an owned version with
+/// [`Tag::into_owned`].
 ///
 /// Use [`deserialize_network`] to construct a tag from network data, or [`deserialize_file`] to
 /// construct using the file variant.
@@ -286,7 +287,7 @@ impl Debug for TagRepr<'_> {
             TagRepr::Compound(name, compound) => {
                 let mut debug = match name {
                     None => f.debug_tuple("TAG_Compound"),
-                    Some(name) => f.debug_tuple(format!("TAG_Compound[{name}]").as_ref())
+                    Some(name) => f.debug_tuple(format!("TAG_Compound['{name}']").as_ref()),
                 };
 
                 for value in compound.values() {
@@ -294,7 +295,7 @@ impl Debug for TagRepr<'_> {
                 }
 
                 debug.finish()
-            },
+            }
             TagRepr::IntArray(name, int_array) => debug_tag(f, "TAG_Int_Array", name, int_array),
             TagRepr::LongArray(name, long_array) => {
                 debug_tag(f, "TAG_Long_Array", name, long_array)
@@ -359,6 +360,10 @@ macro_rules! as_impl {
     }};
 }
 
+fn owned_name(name: Name<'_>) -> Name<'static> {
+    name.map(|moo| Cow::Owned(moo.into_owned()))
+}
+
 impl<'tag> TagRepr<'tag> {
     ///
     /// Macros need to access this function, so it's provided.
@@ -379,6 +384,56 @@ impl<'tag> TagRepr<'tag> {
             | TagRepr::Compound(name, _)
             | TagRepr::IntArray(name, _)
             | TagRepr::LongArray(name, _) => name.as_ref(),
+        }
+    }
+
+    fn into_owned(self) -> TagRepr<'static> {
+        match self {
+            TagRepr::End => TagRepr::End,
+            TagRepr::Byte(name, payload) => TagRepr::Byte(owned_name(name), payload),
+            TagRepr::Short(name, payload) => TagRepr::Short(owned_name(name), payload),
+            TagRepr::Int(name, payload) => TagRepr::Int(owned_name(name), payload),
+            TagRepr::Long(name, payload) => TagRepr::Long(owned_name(name), payload),
+            TagRepr::Float(name, payload) => TagRepr::Float(owned_name(name), payload),
+            TagRepr::Double(name, payload) => TagRepr::Double(owned_name(name), payload),
+            TagRepr::ByteArray(name, payload) => {
+                TagRepr::ByteArray(owned_name(name), Cow::Owned(payload.into_owned()))
+            }
+            TagRepr::String(name, payload) => {
+                TagRepr::String(owned_name(name), Cow::Owned(payload.into_owned()))
+            }
+            TagRepr::List(name, ty, mut tags) => {
+                // we can avoid wastefully re-allocating this list with a bit of trickery
+                for tag in &mut tags {
+                    *tag = core::mem::replace(tag, TagRepr::End).into_owned();
+                }
+
+                // SAFETY:
+                // - all elements of `tags` are TagRepr<'static> now, because we called into_owned
+                //   on each of them.
+                let tags_static = unsafe {
+                    core::mem::transmute::<Vec<TagRepr<'tag>>, Vec<TagRepr<'static>>>(tags)
+                };
+
+                TagRepr::List(owned_name(name), ty, tags_static)
+            }
+            TagRepr::Compound(name, tags) => {
+                // the same trickery we used with lists isn't possible for maps:
+                // we'd need in-place mutable access to keys as well as values
+                let mut static_copy = hashbrown::HashMap::with_capacity(tags.len());
+
+                for (key, value) in tags {
+                    static_copy.insert(Cow::Owned(key.into_owned()), value.into_owned());
+                }
+
+                TagRepr::Compound(owned_name(name), static_copy)
+            }
+            TagRepr::IntArray(name, array) => {
+                TagRepr::IntArray(owned_name(name), Cow::Owned(array.into_owned()))
+            }
+            TagRepr::LongArray(name, array) => {
+                TagRepr::LongArray(owned_name(name), Cow::Owned(array.into_owned()))
+            }
         }
     }
 
@@ -625,7 +680,6 @@ macro_rules! tag_methods {
         pub fn is_container(&self) -> bool {
             match &self.repr {
                 TagRepr::List(_, _, _) | TagRepr::Compound(_, _) => true,
-
                 _ => false,
             }
         }
@@ -932,6 +986,48 @@ impl PartialEq<Tag<'_>> for TagAccess<'_, '_> {
 
 impl<'tag> Tag<'tag> {
     tag_methods! {}
+
+    ///
+    /// Converts this tag into one with a static lifetime. This allows it to e.g. be freely returned
+    /// from functions where it previously referenced local variables.
+    ///
+    /// When constructing tags in code using the [`tag`] macro, consider if it's possible to move
+    /// relevant local variables into the tag instead of borrowing and calling this method after:
+    ///
+    /// ```
+    /// use std::borrow::Cow;
+    /// use yarms_nbt::{tag, Tag};
+    ///
+    /// fn example() -> Tag<'static> {
+    ///     let string = String::from("hello");
+    ///
+    ///     let string_tag = tag!(String["string"]: string);
+    ///
+    ///     // can't return `string_tag` as it references `string`...
+    ///     // return string_tag; // ERROR
+    ///
+    ///     // we could also do this
+    ///     // return string_tag.into_owned(); // works, but less efficient
+    ///
+    ///     // let's try again...
+    ///     drop(string_tag);
+    ///
+    ///     // use curly braces around `string` to move it instead
+    ///     let better_method = tag!(String["string"]: {string});
+    ///
+    ///     // now, we can return!
+    ///     better_method
+    /// }
+    ///
+    /// assert_eq!(example().as_string().map(|s| s.as_ref()), Some("hello"));
+    ///
+    /// ```
+    #[must_use]
+    pub fn into_owned(self) -> Tag<'static> {
+        Tag {
+            repr: self.repr.into_owned(),
+        }
+    }
 }
 
 impl<'tag> TagAccess<'_, 'tag> {
@@ -1020,7 +1116,7 @@ pub fn deserialize_network<'tag, 'data: 'tag>(
 }
 
 ///
-/// Deserializes "file variant" NBT. The root `TAG_Compound` has a name.
+/// Deserializes "file variant" NBT. The root `TAG_Compound` has a name (although it may be empty).
 ///
 /// # Errors
 /// If `bytes` contains invalid NBT data, an error will be returned.

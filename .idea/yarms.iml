@@ -18,6 +18,8 @@
       <sourceFolder url="file://$MODULE_DIR$/yarms-derive/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/yarms-nbt/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/yarms-snbt/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/yarms-anvil/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/yarms-threadpool/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

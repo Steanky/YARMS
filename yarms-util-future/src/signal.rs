@@ -56,7 +56,6 @@ pub struct Receiver {
 ///     recv.await
 /// }
 /// ```
-#[must_use]
 pub fn channel() -> (Sender, Receiver) {
     let state = switch::Arc::new((switch::AtomicUsize::new(1), Signaller::new()));
     (

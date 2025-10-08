@@ -158,6 +158,7 @@ impl<T> Receiver<T> {
     ///
     /// If the paired sender is dropped, this function will return `None`.
     #[allow(clippy::missing_panics_doc, reason = "Can't actually panic")]
+    #[must_use]
     pub fn block_on(self) -> Option<T> {
         self.state.signaller.block_on();
 

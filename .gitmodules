@@ -1,3 +1,0 @@
-[submodule "yarms-datagen/yarn"]
-	path = yarms-datagen/yarn
-	url = https://github.com/FabricMC/yarn

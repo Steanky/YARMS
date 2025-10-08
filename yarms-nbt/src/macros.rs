@@ -94,15 +94,15 @@ macro_rules! __gen_list_array {
     };
 
     ( $element_type:ident, $( $sublist_type:ident : $value:tt ),+ ) => {[
-        $({
+        $(
             $crate::__tag_repr!($sublist_type List : $value)
-        }),+
+        ),+
     ]};
 
     ( $element_type:ident, $( $value:tt ),+ ) => {[
-        $({
+        $(
             $crate::__tag_repr!($element_type : $value)
-        }),+
+        ),+
     ]};
 }
 

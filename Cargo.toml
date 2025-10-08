@@ -2,15 +2,18 @@
 resolver = "2"
 members = [
     "benches",
-    "yarms-datagen", "yarms-datagen-spec",
-    "yarms-identifier",
-    "yarms-packet",
+    "yarms-anvil",
+    "yarms-datagen",
+    "yarms-datagen-spec",
     "yarms-derive",
+    "yarms-identifier",
+    "yarms-nbt",
+    "yarms-packet",
     "yarms-packet-io",
     "yarms-protocol" ,
-    "yarms-util-future"
-,   "yarms-wiki-scraper",
-    "yarms-nbt"
+    "yarms-threadpool",
+    "yarms-util-future",
+    "yarms-wiki-scraper"
 ]
 
 [workspace.lints.clippy]

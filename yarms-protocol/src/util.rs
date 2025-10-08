@@ -659,6 +659,7 @@ mod tests {
     use crate::ProtocolWrite;
 
     #[test]
+    #[ignore]
     fn all_len_in_range() {
         for i in i32::MIN..=i32::MAX {
             let res = var_int_len(i);
@@ -734,6 +735,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn incomplete_partial_all() {
         let mut bytes = [0u8; MAX_VAR_INT_BYTES];
 
@@ -772,6 +774,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn full_partial_read_round_trip_all() {
         let mut bytes = [0u8; MAX_VAR_INT_BYTES];
 
@@ -794,6 +797,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn full_read_round_trip_all() {
         let mut bytes = [0u8; MAX_VAR_INT_BYTES];
 

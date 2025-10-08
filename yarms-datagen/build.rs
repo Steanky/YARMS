@@ -2,7 +2,7 @@
 //! Build script for automatically generating Minecraft packets, and really anything that's
 //! version-specific that the server cares about.
 
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;

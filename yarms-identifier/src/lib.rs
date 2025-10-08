@@ -21,9 +21,7 @@ use core::error::Error;
 use core::fmt::{Display, Formatter};
 use core::hash::{Hash, Hasher};
 
-use alloc::borrow::ToOwned;
 use alloc::string::String;
-use core::borrow::Borrow;
 
 ///
 /// The default namespace used when one is not provided.
@@ -407,6 +405,7 @@ impl Identifier {
     /// namespace.
     ///
     /// This method will never allocate.
+    #[must_use]
     pub fn into_identifier(self) -> String {
         self.inner
     }
