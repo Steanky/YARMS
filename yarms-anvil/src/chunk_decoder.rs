@@ -30,7 +30,7 @@ pub trait ChunkDecoder {
     ) -> AnvilReadResult<()>
     where
         Buf: Buffer,
-        Callback: for<'tag> FnOnce(Tag<'tag>) + Send + 'static,
+        Callback: for<'tag> FnOnce(Tag<'tag>),
         Src: Read + Seek;
 }
 
@@ -54,7 +54,7 @@ impl ChunkDecoder for Standard {
     ) -> AnvilReadResult<()>
     where
         Buf: Buffer,
-        Callback: for<'tag> FnOnce(Tag<'tag>) + Send + 'static,
+        Callback: for<'tag> FnOnce(Tag<'tag>),
         Src: Read + Seek,
     {
         thread_local! {
@@ -84,6 +84,7 @@ impl ChunkDecoder for Standard {
 
         let compression_type = *chunk_data.get(4).ok_or(AnvilReadError::BadLength)?;
 
+        // this slices off the useless padding at the end
         let chunk_data = chunk_data
             .get(5..5 + exact_length)
             .ok_or(AnvilReadError::BadLength)?;
@@ -132,16 +133,31 @@ impl ChunkDecoder for Standard {
                     }
                 };
 
-                Ok(&decompress_buffer
+                let all = decompress_buffer
                     .all()
-                    .expect("should have initialized buffer")[..decompressed_length])
+                    .expect("should have initialized buffer");
+
+                Ok(&all[..decompressed_length])
             })?,
 
             loader::NO_COMPRESSION => chunk_data,
 
             #[cfg(feature = "lz4")]
             loader::LZ4_COMPRESSION => {
-                todo!()
+                let mut decompress = lz4::Decoder::new(chunk_data)?;
+                let mut write = decompress_buffer.writer();
+
+                let bytes_written: usize = std::io::copy(&mut decompress, &mut write)?
+                    .try_into()
+                    .map_err(|_| AnvilReadError::BadLength)?;
+
+                drop(write);
+
+                let all = decompress_buffer
+                    .all()
+                    .expect("should have initialized buffer");
+
+                &all[..bytes_written]
             }
 
             ty => return Err(AnvilReadError::UnrecognizedCompressionType(ty)),

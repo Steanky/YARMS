@@ -1,4 +1,3 @@
-use crate::ChunkData;
 use libdeflater::DecompressionError;
 use yarms_nbt::{NbtDeserializeError, Tag};
 
@@ -23,7 +22,7 @@ pub trait AnvilLoader {
         callback: Callback,
         err_callback: ErrHandler,
     ) where
-        Callback: for<'tag> FnOnce(Option<ChunkData<'tag>>) + Send + 'static,
+        Callback: for<'tag> FnOnce(Option<Tag<'tag>>) + Send + 'static,
         ErrHandler: FnOnce(AnvilReadError) + Send + 'static;
 
     ///
@@ -105,22 +104,20 @@ pub mod std_dependent {
     use crate::buffer::VecBuf;
     use crate::chunk_decoder::ChunkDecoder;
     use crate::loader::{AnvilLoader, AnvilReadError, AnvilReadResult};
-    use crate::region::{FileRegionLoader, RegionLoader};
-    use crate::ChunkData;
+    use crate::region::{FileRegionLoader, RegionLoader, RegionLoaderAccessor};
     use alloc::vec::Vec;
     use dashmap::DashMap;
     use maybe_owned::MaybeOwned;
     use std::cell::RefCell;
     use std::io::{Read, Seek};
-    use std::num::NonZero;
-    use std::path::PathBuf;
+    use std::marker::PhantomData;
     use std::sync::Arc;
     use std::{io, thread_local};
-    use yarms_threadpool::{new_thread_pool, ThreadPool};
+    use yarms_nbt::Tag;
+    use yarms_threadpool::ThreadPool;
 
     ///
-    /// A thread-safe cache shared between threads. Used to provide Anvil header data to all
-    /// interested parties.
+    /// A cache shared between threads. Used to provide Anvil header data to all interested parties.
     pub type TableCache = Arc<DashMap<(i32, i32), Vec<u8>>>;
 
     impl From<io::Error> for AnvilReadError {
@@ -132,14 +129,11 @@ pub mod std_dependent {
     ///
     /// An [`AnvilLoader`] implementation that uses a thread pool for parallelizing chunk loads,
     /// owns its own [`TableCache`], and expects to read chunks from files in a specific directory.
-    pub struct ThreadedAnvilLoader<'pool, Decoder>
-    where
-        Decoder: ChunkDecoder,
-    {
+    pub struct ThreadedAnvilLoader<'pool, LoaderAccessor, Source, Region, Decoder> {
         thread_pool: MaybeOwned<'pool, ThreadPool>,
-        region_directory: Arc<PathBuf>,
         table_cache: TableCache,
-        _decoder: Decoder,
+        loader_accessor: LoaderAccessor,
+        _marker: PhantomData<(Source, Region, Decoder)>,
     }
 
     ///
@@ -148,17 +142,17 @@ pub mod std_dependent {
     ///
     /// # Errors
     /// Returns `Err` if there's a problem loading the chunk.
-    pub fn load_from_region_loader<Src, Loader, F, Decoder>(
-        region_loader: &mut Loader,
+    pub fn load_from_region_loader<Source, Region, Callback, Decoder>(
+        region_loader: &mut Region,
         chunk_x: i32,
         chunk_z: i32,
         table_cache: &TableCache,
-        callback: F,
+        callback: Callback,
     ) -> AnvilReadResult<()>
     where
-        Src: Read + Seek,
-        Loader: RegionLoader<Src>,
-        F: for<'tag> FnOnce(Option<ChunkData<'tag>>) + Send + 'static,
+        Source: Read + Seek,
+        Region: RegionLoader<Source>,
+        Callback: for<'tag> FnOnce(Option<Tag<'tag>>) + Send + 'static,
         Decoder: ChunkDecoder,
     {
         thread_local! {
@@ -176,7 +170,7 @@ pub mod std_dependent {
         };
 
         let Some((chunk_offset, chunk_size)) =
-            Loader::offset_and_size(table_cache, region, chunk_x, chunk_z)?
+            Region::offset_and_size(table_cache, region, chunk_x, chunk_z)?
         else {
             callback(None);
             return Ok(());
@@ -189,13 +183,7 @@ pub mod std_dependent {
                 region,
                 chunk_read_buffer,
                 decompression_buffer,
-                move |tag| {
-                    callback(Some(ChunkData {
-                        tag,
-                        chunk_x,
-                        chunk_z,
-                    }));
-                },
+                move |tag| callback(Some(tag)),
             )
         })
     }
@@ -206,8 +194,12 @@ pub mod std_dependent {
         };
     }
 
-    impl<Decoder> AnvilLoader for ThreadedAnvilLoader<'_, Decoder>
+    impl<Source, Region, LoaderProvider, Decoder> AnvilLoader
+        for ThreadedAnvilLoader<'_, LoaderProvider, Source, Region, Decoder>
     where
+        Source: Read + Seek,
+        Region: RegionLoader<Source>,
+        LoaderProvider: RegionLoaderAccessor<Source, Region> + Send + 'static,
         Decoder: ChunkDecoder,
     {
         fn load_chunk<Callback, ErrHandle>(
@@ -217,17 +209,16 @@ pub mod std_dependent {
             callback: Callback,
             err_handle: ErrHandle,
         ) where
-            Callback: for<'tag> FnOnce(Option<ChunkData<'tag>>) + Send + 'static,
+            Callback: for<'tag> FnOnce(Option<Tag<'tag>>) + Send + 'static,
             ErrHandle: FnOnce(AnvilReadError) + Send + 'static,
         {
-            let save_folder = Arc::clone(&self.region_directory);
             let table_cache = Arc::clone(&self.table_cache);
+            let loader_accessor = self.loader_accessor.copy_for_thread();
 
             self.thread_pool.submit(move || {
-                let result = REGION_LOADERS.with_borrow_mut(move |file_region_loader| {
+                let result = loader_accessor.access_region_loader(|region_loader| {
                     load_from_region_loader::<_, _, _, Decoder>(
-                        file_region_loader
-                            .get_or_insert_with(|| FileRegionLoader::new((*save_folder).clone())),
+                        region_loader,
                         chunk_x,
                         chunk_z,
                         &table_cache,
@@ -242,67 +233,19 @@ pub mod std_dependent {
         }
 
         fn has_chunk(&self, chunk_x: i32, chunk_z: i32) -> AnvilReadResult<bool> {
-            REGION_LOADERS.with_borrow_mut(|file_region_loader| {
-                let loader = file_region_loader
-                    .get_or_insert_with(|| FileRegionLoader::new((*self.region_directory).clone()));
+            self.loader_accessor
+                .copy_for_thread()
+                .access_region_loader(|region_loader| {
+                    let region = match region_loader.load_region(chunk_x >> 5, chunk_z >> 5)? {
+                        None => return Ok(false),
+                        Some(file) => file,
+                    };
 
-                let file = match loader.load_region(chunk_x >> 5, chunk_z >> 5)? {
-                    None => return Ok(false),
-                    Some(file) => file,
-                };
-
-                Ok(
-                    FileRegionLoader::offset_and_size(&self.table_cache, file, chunk_x, chunk_z)?
-                        .is_some(),
-                )
-            })
-        }
-    }
-
-    ///
-    /// Creates a new [`ThreadedAnvilLoader`] with its own dedicated [`ThreadPool`]. The number of
-    /// threads used depends on the value of [`std::thread::available_parallelism`]:
-    /// * If `available_parallelism` returns `Err`, the default parallelism is 4
-    /// * Otherwise, the maximum value used is limited to 32, to preserve memory
-    ///
-    /// The loader will be able to load chunks from Anvil region files (.mca) in `region_directory`
-    /// using its [`AnvilLoader::load_chunk`] method.
-    pub fn threaded_loader<D: ChunkDecoder>(
-        region_directory: PathBuf,
-        decoder: D,
-    ) -> ThreadedAnvilLoader<'static, D> {
-        let threads = std::thread::available_parallelism()
-            .map(NonZero::get)
-            .unwrap_or(4);
-
-        let thread_pool = new_thread_pool(core::cmp::min(threads, 32));
-        ThreadedAnvilLoader {
-            thread_pool: MaybeOwned::from(thread_pool),
-            region_directory: Arc::new(region_directory),
-            table_cache: Arc::new(DashMap::new()),
-            _decoder: decoder,
-        }
-    }
-
-    ///
-    /// Creates a new [`ThreadedAnvilLoader`] from either a borrowed or owned [`ThreadPool`]. This
-    /// allows multiple loaders to share the same pool.
-    ///
-    /// Otherwise, operates similarly to [`threaded_loader`].
-    pub fn threaded_loader_with_pool<'pool, Decoder, Pool>(
-        region_directory: PathBuf,
-        pool: Pool,
-        decoder: Decoder,
-    ) -> ThreadedAnvilLoader<'pool, Decoder>
-    where
-        Decoder: ChunkDecoder,
-        Pool: Into<MaybeOwned<'pool, ThreadPool>>,
-    {
-        ThreadedAnvilLoader {
-            thread_pool: pool.into(),
-            region_directory: Arc::new(region_directory),
-            table_cache: Arc::new(DashMap::new()),
-            _decoder: decoder,
+                    Ok(
+                        Region::offset_and_size(&self.table_cache, region, chunk_x, chunk_z)?
+                            .is_some(),
+                    )
+                })
         }
     }
 }

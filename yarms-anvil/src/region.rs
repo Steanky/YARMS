@@ -1,14 +1,19 @@
 use crate::loader::{AnvilReadError, AnvilReadResult};
 use crate::{region_file_name, TableCache};
-use hashbrown::hash_map::Entry;
+use lru::LruCache;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::num::NonZeroUsize;
+use std::ops::DerefMut;
 use std::path::PathBuf;
-use std::vec;
+use std::sync::{Arc, Mutex};
+use std::thread::LocalKey;
+use std::{io, vec};
 
 ///
 /// Loads Anvil regions from some source.
-pub trait RegionLoader<Src: Read + Seek> {
+pub trait RegionLoader<Src> {
     ///
     /// Loads a region, given its coordinates.
     ///
@@ -38,29 +43,106 @@ pub trait RegionLoader<Src: Read + Seek> {
 }
 
 ///
+/// Provides scoped mutable access to a [`RegionLoader`] implementation.
+///
+/// The main motivation behind this trait is to enable region loaders to be stored in thread locals.
+/// However, general implementations also exist for `Arc<Mutex<L>> where L: RegionLoader` and
+/// `Arc<L> where L: RegionLoader + Clone`. The former supports safe shared access with locking, the
+/// latter is lock-free but may be expensive (as the region loader is cloned every time).
+///
+/// Thread locals are both cheap and lock-free, and so should be preferred over these other options
+/// where possible.
+pub trait RegionLoaderAccessor<Source, Loader> {
+    ///
+    /// Access the region loader by calling the provided callback function and returning its result.
+    fn access_region_loader<R, Callback: FnOnce(&mut Loader) -> R>(self, callback: Callback) -> R;
+
+    ///
+    /// Creates a copy of this accessor, to be passed across thread boundaries.
+    ///
+    /// Note that `Self` must be `Send + 'static`!
+    fn copy_for_thread(&self) -> Self
+    where
+        Self: Send + 'static;
+}
+
+impl<Source, Loader: RegionLoader<Source>> RegionLoaderAccessor<Source, Loader>
+    for &'static LocalKey<RefCell<Loader>>
+{
+    #[inline]
+    fn access_region_loader<R, Callback: FnOnce(&mut Loader) -> R>(self, callback: Callback) -> R {
+        self.with_borrow_mut(|region_loader| callback(region_loader))
+    }
+
+    #[inline]
+    fn copy_for_thread(&self) -> Self {
+        self
+    }
+}
+
+impl<Source, Loader: RegionLoader<Source>> RegionLoaderAccessor<Source, Loader>
+    for Arc<Mutex<Loader>>
+{
+    #[inline]
+    fn access_region_loader<R, Callback: FnOnce(&mut Loader) -> R>(self, callback: Callback) -> R {
+        let mut guard = self.lock().unwrap();
+        callback(guard.deref_mut())
+    }
+
+    #[inline]
+    fn copy_for_thread(&self) -> Self {
+        self.clone()
+    }
+}
+
+impl<Source, Loader: RegionLoader<Source> + Clone> RegionLoaderAccessor<Source, Loader>
+    for Arc<Loader>
+{
+    #[inline]
+    fn access_region_loader<R, Callback: FnOnce(&mut Loader) -> R>(self, callback: Callback) -> R {
+        let mut loader = self.as_ref().clone();
+        callback(&mut loader)
+    }
+
+    #[inline]
+    fn copy_for_thread(&self) -> Self {
+        Arc::clone(self)
+    }
+}
+
+///
 /// [`RegionLoader`] implementation that assumes region files are available together in the same
-/// root directory. Maintains a map of file handles, which are opened as needed.
+/// root directory.
+///
+/// Stores file handles to regions in an [`LruCache`] for efficiency, the capacity of which can be
+/// set in [`FileRegionLoader::new`].
 pub struct FileRegionLoader {
     region_directory: PathBuf,
-    region_files: hashbrown::HashMap<(i32, i32), File>,
+    region_files: LruCache<(i32, i32), File>,
 }
 
 impl RegionLoader<File> for FileRegionLoader {
     fn load_region(&mut self, region_x: i32, region_z: i32) -> AnvilReadResult<Option<&mut File>> {
-        match self.region_files.entry((region_x, region_z)) {
-            Entry::Occupied(value) => Ok(Some(value.into_mut())),
-
-            Entry::Vacant(vacant) => {
+        let result = self
+            .region_files
+            .try_get_or_insert_mut((region_x, region_z), || {
                 let buf = self
                     .region_directory
                     .join(region_file_name(region_x, region_z));
 
-                if !std::fs::exists(&buf)? {
-                    return Ok(None);
+                if !std::fs::exists(&buf).map_err(Some)? {
+                    return Err(None::<io::Error>);
                 }
 
-                Ok(Some(vacant.insert(File::open(buf)?)))
-            }
+                Ok(File::open(buf).map_err(Some)?)
+            });
+
+        match result {
+            Ok(handle) => Ok(Some(handle)),
+
+            // Err(None) is a special case that signals the file doesn't exist
+            Err(None) => Ok(None),
+            Err(Some(error)) => Err(AnvilReadError::Io(error)),
         }
     }
 
@@ -121,11 +203,18 @@ impl FileRegionLoader {
     ///
     /// Creates a new [`FileRegionLoader`] that will load Anvil files present inside
     /// `region_directory`.
+    ///
+    /// Each instance will hold at most `max_file_handles` at one time.
+    ///
+    /// # Panics
+    /// This function panics if `max_file_handles` is `0`.
     #[must_use]
-    pub fn new(region_directory: PathBuf) -> FileRegionLoader {
+    pub fn new(region_directory: PathBuf, max_file_handles: usize) -> FileRegionLoader {
+        assert_ne!(max_file_handles, 0);
+
         FileRegionLoader {
             region_directory,
-            region_files: hashbrown::HashMap::new(),
+            region_files: LruCache::new(NonZeroUsize::new(max_file_handles).unwrap()),
         }
     }
 }

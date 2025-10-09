@@ -33,7 +33,7 @@ const IS_TEST: bool = cfg!(test);
 /// # Panics
 /// This function will only panic if there is an internal bug, or an allocation failure.
 #[must_use]
-pub fn into_mutf8(str: &str) -> Cow<[u8]> {
+pub fn into_mutf8(str: &str) -> Cow<'_, [u8]> {
     let bytes = str.as_bytes();
 
     let mut idx = 0;
@@ -152,7 +152,7 @@ pub fn into_mutf8(str: &str) -> Cow<[u8]> {
     clippy::too_many_lines,
     reason = "This function uses in-line macros for parsing; not much can be extracted without changing semantics"
 )]
-pub fn from_mutf8(bytes: &[u8]) -> Option<Cow<str>> {
+pub fn from_mutf8(bytes: &[u8]) -> Option<Cow<'_, str>> {
     const USIZE_BYTES: usize = size_of::<usize>();
     const ASCII_BLOCK_SIZE: usize = 2 * USIZE_BYTES;
 

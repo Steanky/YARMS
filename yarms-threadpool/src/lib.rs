@@ -43,7 +43,7 @@ impl ThreadPool {
 
     // internal implementation, with a result type to make the code neater
     #[inline]
-    fn submit_internal<F>(&self, func: F) -> Result<(), PoisonError<MutexGuard<Receiver<Thunk>>>>
+    fn submit_internal<F>(&self, func: F) -> Result<(), PoisonError<MutexGuard<'_, Receiver<Thunk>>>>
     where
         F: FnOnce() + Send + 'static,
     {
@@ -184,7 +184,7 @@ fn spawn_thread(shared_data: Arc<SharedData>) {
 }
 
 impl SharedData {
-    fn do_work(&self) -> Result<(), PoisonError<MutexGuard<Receiver<Thunk>>>> {
+    fn do_work(&self) -> Result<(), PoisonError<MutexGuard<'_, Receiver<Thunk>>>> {
         loop {
             // it shouldn't really be possible to get poisoned...
             // but at least we try to handle it nicely

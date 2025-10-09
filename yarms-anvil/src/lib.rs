@@ -35,7 +35,6 @@ pub use loader::std_dependent::*;
 
 use alloc::string::String;
 use alloc::string::ToString;
-use yarms_nbt::Tag;
 
 ///
 /// Compute the Anvil region file name given the region coordinates.
@@ -65,31 +64,4 @@ pub fn region_file_name(region_x: i32, region_z: i32) -> String {
     file_name.push_str("mca");
 
     file_name
-}
-
-///
-/// A simple data struct representing a chunk. Contains a [`Tag`] and chunk coordinates.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChunkData<'tag> {
-    tag: Tag<'tag>,
-    chunk_x: i32,
-    chunk_z: i32,
-}
-
-impl<'tag> ChunkData<'tag> {
-    pub fn tag(&self) -> &Tag<'tag> {
-        &self.tag
-    }
-
-    pub fn into_tag(self) -> Tag<'tag> {
-        self.tag
-    }
-
-    pub fn chunk_x(&self) -> i32 {
-        self.chunk_x
-    }
-
-    pub fn chunk_z(&self) -> i32 {
-        self.chunk_z
-    }
 }

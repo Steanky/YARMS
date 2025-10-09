@@ -20,6 +20,14 @@ pub trait Buffer {
     ///
     /// If initialized, returns a reference to the entire buffer. Otherwise, returns `None`.
     fn all(&mut self) -> Option<&mut [u8]>;
+
+    #[cfg(feature = "std")]
+    ///
+    /// Returns a writer that writes into this buffer.
+    ///
+    /// The writer will start writing at the beginning of the buffer, initializing it if required.
+    /// That is, the writer will overwrite anything already present.
+    fn writer(&mut self) -> impl std::io::Write;
 }
 
 ///
@@ -50,6 +58,16 @@ impl Buffer for VecBuf {
 
     fn all(&mut self) -> Option<&mut [u8]> {
         self.storage.as_deref_mut()
+    }
+
+    #[cfg(feature = "std")]
+    fn writer(&mut self) -> impl std::io::Write {
+        let storage = match self.storage {
+            None => self.storage.insert(Vec::new()),
+            Some(ref mut storage) => storage,
+        };
+
+        std::io::Cursor::new(storage)
     }
 }
 
