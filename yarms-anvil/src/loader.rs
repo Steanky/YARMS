@@ -1,80 +1,13 @@
-use libdeflater::DecompressionError;
-use yarms_nbt::{NbtDeserializeError, Tag};
-
-///
-/// Trait for something that can load Anvil chunks.
-pub trait AnvilLoader {
-    ///
-    /// Loads a chunk from somewhere. This is (often) the filesystem.
-    ///
-    /// This may be performed asynchronously, depending on the implementation. `callback` will be
-    /// invoked with the resulting [`Tag`] containing the actual data when the chunk is done
-    /// loading, or `None` if the chunk did not exist.
-    ///
-    /// # Errors
-    /// This function doesn't itself return errors, because they may happen on a different thread.
-    /// Instead, the callback function `err_callback` is provided, which implementations can call
-    /// with an [`AnvilReadError`].
-    fn load_chunk<Callback, ErrHandler>(
-        &self,
-        chunk_x: i32,
-        chunk_z: i32,
-        callback: Callback,
-        err_callback: ErrHandler,
-    ) where
-        Callback: for<'tag> FnOnce(Option<Tag<'tag>>) + Send + 'static,
-        ErrHandler: FnOnce(AnvilReadError) + Send + 'static;
-
-    ///
-    /// Checks if the chunk exists.
-    ///
-    /// # Errors
-    /// This function may have to perform I/O to check if the chunk exists.
-    fn has_chunk(&self, chunk_x: i32, chunk_z: i32) -> AnvilReadResult<bool>;
-}
-
-///
-/// Error enum indicating problems that can arise when trying to read Anvil data.
-#[derive(Debug)]
-pub enum AnvilReadError {
-    #[cfg(feature = "std")]
-    ///
-    /// An I/O related error occurred.
-    Io(std::io::Error),
-
-    ///
-    /// The length of the data found was not as expected.
-    BadLength,
-
-    ///
-    /// An unrecognized or unsupported chunk compression type was found.
-    UnrecognizedCompressionType(u8),
-
-    ///
-    /// Chunk NBT data was invalid.
-    BadNbt(NbtDeserializeError),
-
-    ///
-    /// A compressed chunk could not be decompressed.
-    FailedDecompression(DecompressionError),
-}
-
-impl From<NbtDeserializeError> for AnvilReadError {
-    fn from(value: NbtDeserializeError) -> Self {
-        Self::BadNbt(value)
-    }
-}
-
-impl From<DecompressionError> for AnvilReadError {
-    fn from(value: DecompressionError) -> Self {
-        Self::FailedDecompression(value)
-    }
-}
-
-///
-/// Result type used across most of this crate to represent a fallible result when attempting to
-/// interpret Anvil data, read Anvil data from I/O, etc.
-pub type AnvilReadResult<T> = Result<T, AnvilReadError>;
+use crate::access::Accessor;
+use crate::buffer::Buffer;
+use crate::chunk_decoder::ChunkDecoder;
+use crate::header::HeaderLookup;
+use crate::region::RegionLoader;
+use core::cell::RefCell;
+use maybe_owned::MaybeOwned;
+use yarms_chunk_loader::ChunkReadResult;
+use yarms_chunk_loader::{ChunkLoader, ChunkReadError, ThreadedChunkLoader};
+use yarms_nbt::Tag;
 
 ///
 /// Type indicator showing we should decompress the chunk as `gzip` data. This is part of the Anvil
@@ -96,156 +29,154 @@ pub const NO_COMPRESSION: u8 = 3;
 pub const LZ4_COMPRESSION: u8 = 4;
 
 #[cfg(feature = "std")]
-#[allow(clippy::std_instead_of_core, reason = "This module is std-only")]
-#[allow(clippy::std_instead_of_alloc, reason = "This module is std-only")]
 ///
-/// Loader-related features that require `std`.
-pub mod std_dependent {
-    use crate::buffer::VecBuf;
-    use crate::chunk_decoder::ChunkDecoder;
-    use crate::loader::{AnvilLoader, AnvilReadError, AnvilReadResult};
-    use crate::region::{FileRegionLoader, RegionLoader, RegionLoaderAccessor};
-    use alloc::vec::Vec;
-    use dashmap::DashMap;
-    use maybe_owned::MaybeOwned;
-    use std::cell::RefCell;
-    use std::io::{Read, Seek};
-    use std::marker::PhantomData;
-    use std::sync::Arc;
-    use std::{io, thread_local};
-    use yarms_nbt::Tag;
-    use yarms_threadpool::ThreadPool;
+/// Type alias for `&'static std::thread::LocalKey<RefCell<T>>`.
+pub type ThreadLocal<T> = &'static std::thread::LocalKey<RefCell<T>>;
 
-    ///
-    /// A cache shared between threads. Used to provide Anvil header data to all interested parties.
-    pub type TableCache = Arc<DashMap<(i32, i32), Vec<u8>>>;
+///
+/// Helper method to load a chunk from an Anvil region, decode it, and execute a callback with the
+/// resulting NBT data.
+///
+/// # Errors
+/// Returns `Err` if there's a problem loading the chunk.
+pub fn load_from_region_loader<Buf, Buffers, Header, Source, Loader, Decoder, Call, R>(
+    buffer_access: &Buffers,
+    header_lookup: &Header,
+    region_loader: &mut Loader,
+    decoder: &Decoder,
+    chunk_x: i32,
+    chunk_z: i32,
+    callback: Call,
+) -> ChunkReadResult<R>
+where
+    Buf: Buffer,
+    Buffers: Accessor<Target = (Buf, Buf)>,
+    Header: HeaderLookup<Source> + ?Sized,
+    Source: ?Sized,
+    Loader: RegionLoader<Source = Source> + ?Sized,
+    Decoder: ChunkDecoder<Source> + ?Sized,
+    Call: for<'tag> FnOnce(Option<Tag<'tag>>) -> R,
+{
+    let Some(region) = region_loader.load_region(chunk_x >> 5, chunk_z >> 5)? else {
+        return Ok(callback(None));
+    };
 
-    impl From<io::Error> for AnvilReadError {
-        fn from(value: io::Error) -> Self {
-            AnvilReadError::Io(value)
-        }
-    }
+    let Some((chunk_offset, chunk_size)) = header_lookup.lookup(region, chunk_x, chunk_z)? else {
+        return Ok(callback(None));
+    };
 
-    ///
-    /// An [`AnvilLoader`] implementation that uses a thread pool for parallelizing chunk loads,
-    /// owns its own [`TableCache`], and expects to read chunks from files in a specific directory.
-    pub struct ThreadedAnvilLoader<'pool, LoaderAccessor, Source, Region, Decoder> {
-        thread_pool: MaybeOwned<'pool, ThreadPool>,
-        table_cache: TableCache,
-        loader_accessor: LoaderAccessor,
-        _marker: PhantomData<(Source, Region, Decoder)>,
-    }
+    buffer_access.access(|(chunk_read_buffer, decompression_buffer)| {
+        decoder.decode(
+            chunk_offset,
+            chunk_size,
+            region,
+            chunk_read_buffer,
+            decompression_buffer,
+            move |tag| callback(Some(tag)),
+        )
+    })
+}
 
-    ///
-    /// Helper method to load a chunk given a mutable reference to a [`RegionLoader`], the chunk
-    /// location itself, and a cache of information about the chunk offsets.
-    ///
-    /// # Errors
-    /// Returns `Err` if there's a problem loading the chunk.
-    pub fn load_from_region_loader<Source, Region, Callback, Decoder>(
-        region_loader: &mut Region,
+///
+/// A [`ChunkLoader`] implementation supporting the Anvil format.
+pub struct AnvilLoader<'pool, Pool, Buffers, Header, Access, Decoder> {
+    thread_pool: MaybeOwned<'pool, Pool>,
+    buffers: Buffers,
+    header_lookup: Header,
+    region_loader: Access,
+    decoder: Decoder,
+}
+
+impl<Pool, Buf, Buffers, Header, Access, Source, Loader, Decoder> ChunkLoader
+    for AnvilLoader<'_, Pool, Buffers, Header, Access, Decoder>
+where
+    Buf: Buffer,
+    Buffers: Accessor<Target = (Buf, Buf)>,
+    Header: HeaderLookup<Source>,
+    Access: Accessor<Target = Loader>,
+    Source: ?Sized,
+    Loader: RegionLoader<Source = Source>,
+    Decoder: ChunkDecoder<Source>,
+{
+    fn load_chunk_sync<Callback, R>(
+        &self,
         chunk_x: i32,
         chunk_z: i32,
-        table_cache: &TableCache,
         callback: Callback,
-    ) -> AnvilReadResult<()>
+    ) -> ChunkReadResult<R>
     where
-        Source: Read + Seek,
-        Region: RegionLoader<Source>,
-        Callback: for<'tag> FnOnce(Option<Tag<'tag>>) + Send + 'static,
-        Decoder: ChunkDecoder,
+        Callback: for<'tag> FnOnce(Option<Tag<'tag>>) -> R,
     {
-        thread_local! {
-            static BUFFERS: RefCell<(VecBuf, VecBuf)> = const {
-                RefCell::new((VecBuf::new(), VecBuf::new()))
-            };
-        }
-
-        let region_x = chunk_x >> 5;
-        let region_z = chunk_z >> 5;
-
-        let Some(region) = region_loader.load_region(region_x, region_z)? else {
-            callback(None);
-            return Ok(());
-        };
-
-        let Some((chunk_offset, chunk_size)) =
-            Region::offset_and_size(table_cache, region, chunk_x, chunk_z)?
-        else {
-            callback(None);
-            return Ok(());
-        };
-
-        BUFFERS.with_borrow_mut(|(chunk_read_buffer, decompression_buffer)| {
-            Decoder::decode(
-                chunk_offset,
-                chunk_size,
-                region,
-                chunk_read_buffer,
-                decompression_buffer,
-                move |tag| callback(Some(tag)),
+        self.region_loader.access(|region_loader| {
+            load_from_region_loader(
+                &self.buffers,
+                &self.header_lookup,
+                region_loader,
+                &self.decoder,
+                chunk_x,
+                chunk_z,
+                callback,
             )
         })
     }
 
-    thread_local! {
-        static REGION_LOADERS: RefCell<Option<FileRegionLoader>> = const {
-            RefCell::new(None)
-        };
+    fn has_chunk(&self, chunk_x: i32, chunk_z: i32) -> ChunkReadResult<bool> {
+        self.region_loader.access(|region_loader| {
+            let Some(region) = region_loader.load_region(chunk_x >> 5, chunk_z >> 5)? else {
+                return Ok(false);
+            };
+
+            Ok(self
+                .header_lookup
+                .lookup(region, chunk_x, chunk_z)?
+                .is_some())
+        })
     }
+}
 
-    impl<Source, Region, LoaderProvider, Decoder> AnvilLoader
-        for ThreadedAnvilLoader<'_, LoaderProvider, Source, Region, Decoder>
-    where
-        Source: Read + Seek,
-        Region: RegionLoader<Source>,
-        LoaderProvider: RegionLoaderAccessor<Source, Region> + Send + 'static,
-        Decoder: ChunkDecoder,
+impl<Pool, Buf, Buffers, Header, Access, Source, Loader, Decoder> ThreadedChunkLoader
+    for AnvilLoader<'_, Pool, Buffers, Header, Access, Decoder>
+where
+    Pool: yarms_threadpool::Pool,
+    Buf: Buffer,
+    Buffers: Accessor<Target = (Buf, Buf)> + Send + 'static,
+    Header: HeaderLookup<Source> + Clone + Send + 'static,
+    Access: Accessor<Target = Loader> + Send + 'static,
+    Source: ?Sized,
+    Loader: RegionLoader<Source = Source>,
+    Decoder: ChunkDecoder<Source> + Clone + Send + 'static,
+{
+    fn load_chunk_async<Call, Err>(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        callback: Call,
+        err_handle: Err,
+    ) where
+        Call: for<'tag> FnOnce(Option<Tag<'tag>>) + Send + 'static,
+        Err: FnOnce(ChunkReadError) + Send + 'static,
     {
-        fn load_chunk<Callback, ErrHandle>(
-            &self,
-            chunk_x: i32,
-            chunk_z: i32,
-            callback: Callback,
-            err_handle: ErrHandle,
-        ) where
-            Callback: for<'tag> FnOnce(Option<Tag<'tag>>) + Send + 'static,
-            ErrHandle: FnOnce(AnvilReadError) + Send + 'static,
-        {
-            let table_cache = Arc::clone(&self.table_cache);
-            let loader_accessor = self.loader_accessor.copy_for_thread();
+        let loader_accessor = self.region_loader.clone();
+        let buffer_accessor = self.buffers.clone();
+        let header_lookup = self.header_lookup.clone();
+        let decoder = self.decoder.clone();
 
-            self.thread_pool.submit(move || {
-                let result = loader_accessor.access_region_loader(|region_loader| {
-                    load_from_region_loader::<_, _, _, Decoder>(
-                        region_loader,
-                        chunk_x,
-                        chunk_z,
-                        &table_cache,
-                        callback,
-                    )
-                });
-
-                if let Err(read_error) = result {
-                    err_handle(read_error);
-                }
+        self.thread_pool.submit(move || {
+            let result = loader_accessor.access(|region_loader| {
+                load_from_region_loader(
+                    &buffer_accessor,
+                    &header_lookup,
+                    region_loader,
+                    &decoder,
+                    chunk_x,
+                    chunk_z,
+                    callback,
+                )
             });
-        }
 
-        fn has_chunk(&self, chunk_x: i32, chunk_z: i32) -> AnvilReadResult<bool> {
-            self.loader_accessor
-                .copy_for_thread()
-                .access_region_loader(|region_loader| {
-                    let region = match region_loader.load_region(chunk_x >> 5, chunk_z >> 5)? {
-                        None => return Ok(false),
-                        Some(file) => file,
-                    };
-
-                    Ok(
-                        Region::offset_and_size(&self.table_cache, region, chunk_x, chunk_z)?
-                            .is_some(),
-                    )
-                })
-        }
+            if let Err(read_error) = result {
+                err_handle(read_error);
+            }
+        });
     }
 }

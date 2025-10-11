@@ -30,6 +30,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::fmt::{Debug, Display, Formatter};
 use hashbrown::hash_map::Entry;
+use core::error::Error;
 
 ///
 /// Public for access from macros, but hidden because it's not supposed to be part of the public
@@ -122,11 +123,8 @@ pub fn __wrap(repr: TagRepr) -> Tag {
 ///
 /// Tags have an associated lifetime, which allows variants that need it to borrow directly from an
 /// underlying byte slice. This can significantly cut down on allocations, though the tag will be
-/// bound to the lifetime of the storage. Tags can be converted into an owned version with
-/// [`Tag::into_owned`].
-///
-/// Use [`deserialize_network`] to construct a tag from network data, or [`deserialize_file`] to
-/// construct using the file variant.
+/// bound to the lifetime of the storage. Borrowed tags can be converted into ones with a `'static`
+/// lifetime using [`Tag::into_owned`].
 ///
 /// Tags provide a family of so-called `as_*` methods that permit access to their underlying
 /// payload. These all yield an [`Option`], which will be empty if the type does not match. For
@@ -183,7 +181,7 @@ pub fn __wrap(repr: TagRepr) -> Tag {
 /// // `replace` is false so we don't update it.
 /// compound.add(tag!(Short["height"]: 200), false);
 ///
-/// assert_eq!(Some(182), compound.get(&keys!({"height"})).and_then(Tag::as_short));
+/// assert_eq!(Some(182), compound.get(&keys!("height")).and_then(Tag::as_short));
 ///
 /// ```
 ///
@@ -260,6 +258,18 @@ pub enum TagKey<'a> {
     ///
     /// A key into a `TAG_Compound`.
     Name(&'a str),
+}
+
+impl From<usize> for TagKey<'static> {
+    fn from(value: usize) -> Self {
+        TagKey::Index(value)
+    }
+}
+
+impl<'a> From<&'a str> for TagKey<'a> {
+    fn from(value: &'a str) -> Self {
+        TagKey::Name(value)
+    }
 }
 
 impl Debug for Tag<'_> {
@@ -641,10 +651,9 @@ macro_rules! tag_methods {
 
         ///
         /// Mutable equivalent of [`Tag::get`]. Note that this returns [`TagAccess`], which has all
-        /// of the same methods, but makes replacing the underlying tag impossible, since
-        /// `TagAccess` cannot be freely constructed. This is done to avoid ad hoc violations of
-        /// preconditions such as lists not containing named tags or compounds containing unnamed
-        /// ones.
+        /// the same methods, but makes replacing the underlying tag impossible, since `TagAccess`
+        /// cannot be freely constructed. This is done to avoid ad hoc violations of preconditions
+        /// such as lists not containing named tags or compounds containing unnamed ones.
         #[must_use]
         pub fn get_mut(&mut self, keys: &[TagKey]) -> Option<TagAccess<'_, 'tag>> {
             self.repr.get_mut(keys).map(|repr| TagAccess { repr })
@@ -920,13 +929,13 @@ macro_rules! tag_methods {
         ///
         /// // can't add doubles to an Int list...
         /// assert!(tag.add(tag!(Double: 10.0), false).is_some());
-        /// assert!(tag.update_list_type(TAG_DOUBLE), "tag is an empty list so this will work");
+        /// assert!(tag.set_list_type(TAG_DOUBLE), "tag is an empty list so this will work");
         ///
         /// // now we successfully added the tag
         /// assert!(tag.add(tag!(Double: 10.0), false).is_none());
         ///
         /// ```
-        pub fn update_list_type(&mut self, new_ty: u8) -> bool {
+        pub fn set_list_type(&mut self, new_ty: u8) -> bool {
             if !(0..=12).contains(&new_ty) {
                 return false;
             }
@@ -949,6 +958,15 @@ macro_rules! tag_methods {
         /// Gets the element type, which will be present if we are a list, absent if not.
         ///
         /// The returned value will be in range `0..=12`.
+        ///
+        /// ```
+        /// use yarms_nbt::tag;
+        /// use yarms_nbt::TAG_INT;
+        ///
+        /// let list = tag!(Int List: [ 42 ]);
+        ///
+        /// assert_eq!(Some(TAG_INT), list.get_list_type());
+        /// ```
         #[must_use]
         pub fn get_list_type(&self) -> Option<u8> {
             match &self.repr {
@@ -964,8 +982,11 @@ macro_rules! tag_methods {
 /// `&mut Tag` because the latter could allow inserting invalid tags for the context (such as a
 /// named tag in a list, or an unnamed one in a compound).
 ///
-/// All methods available on [`Tag`] exist on [`TagAccess`], too. See [`Tag`] for complete
-/// documentation and examples.
+/// With the sole exception of [`Tag::into_owned`], all methods available on [`Tag`] exist on
+/// [`TagAccess`], too. See [`Tag`] for complete documentation and examples.
+///
+/// If for some reason you definitely need a `Tag` and not a `TagAccess`, you can call
+/// [`TagAccess::as_tag`]. Note that this entails cloning and may be inefficient.
 #[derive(Debug, PartialEq)]
 #[repr(transparent)]
 pub struct TagAccess<'item, 'tag> {
@@ -973,12 +994,14 @@ pub struct TagAccess<'item, 'tag> {
 }
 
 impl PartialEq<TagAccess<'_, '_>> for Tag<'_> {
+    #[inline]
     fn eq(&self, other: &TagAccess<'_, '_>) -> bool {
         self.repr.eq(&*other.repr)
     }
 }
 
 impl PartialEq<Tag<'_>> for TagAccess<'_, '_> {
+    #[inline]
     fn eq(&self, other: &Tag<'_>) -> bool {
         (*self.repr).eq(&other.repr)
     }
@@ -1032,6 +1055,18 @@ impl<'tag> Tag<'tag> {
 
 impl<'tag> TagAccess<'_, 'tag> {
     tag_methods! {}
+
+    ///
+    /// Create an independent copy of this `TagAccess` as an owned `Tag`.
+    ///
+    /// Note that the lifetime `'tag` is still shared with the `TagAccess`. If you need a fully
+    /// owned tag with a static lifetime, you can call [`Tag::into_owned`].
+    #[must_use]
+    pub fn as_tag(&self) -> Tag<'tag> {
+        Tag {
+            repr: self.repr.clone(),
+        }
+    }
 }
 
 ///
@@ -1076,17 +1111,15 @@ impl Display for NbtDeserializeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             NbtDeserializeError::UnexpectedEOF => f.write_str("unexpected EOF"),
-            NbtDeserializeError::BadRootType(ty) => write!(
-                f,
-                "bad type for root, expected TAG_Compound but got {}",
-                *ty
-            ),
-            NbtDeserializeError::UnknownType(ty) => write!(f, "unknown type identifier {}", *ty),
+            NbtDeserializeError::BadRootType(ty) => {
+                write!(f, "invalid type for root, expected `10` but got `{}`", *ty)
+            }
+            NbtDeserializeError::UnknownType(ty) => write!(f, "invalid type `{}`", *ty),
             NbtDeserializeError::InvalidMUTF8 => f.write_str("invalid MUTF-8 bytes"),
             NbtDeserializeError::InvalidLengthPrefix(p) => {
-                write!(f, "invalid length prefix {}", *p)
+                write!(f, "invalid length prefix `{}`", *p)
             }
-            NbtDeserializeError::DepthLimitExceeded => f.write_str("exceeded depth limit"),
+            NbtDeserializeError::DepthLimitExceeded => f.write_str("exceeded tag depth limit"),
             NbtDeserializeError::NonEmptyTagEndList => {
                 f.write_str("list of element type TAG_End had a non-zero length")
             }
@@ -1095,7 +1128,7 @@ impl Display for NbtDeserializeError {
     }
 }
 
-impl core::error::Error for NbtDeserializeError {}
+impl Error for NbtDeserializeError {}
 
 #[cfg(feature = "std")]
 impl From<NbtDeserializeError> for std::io::Error {
@@ -1439,7 +1472,7 @@ mod tests {
             bytes.push((result % 100) as u8);
         }
 
-        let bytes_tag = tag.get(&keys!({"byteArrayTest (the first 1000 values of (n*n*255+n*7)%100, starting with n=0 (0, 62, 34, 16, 8, ...))"})).expect("should have had bytes key");
+        let bytes_tag = tag.get(&keys!("byteArrayTest (the first 1000 values of (n*n*255+n*7)%100, starting with n=0 (0, 62, 34, 16, 8, ...))")).expect("should have had bytes key");
         let tag_bytes = bytes_tag.as_byte_array().expect("expected byte array type");
 
         assert_eq!(&bytes[..], tag_bytes.as_ref());

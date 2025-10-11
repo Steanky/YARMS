@@ -1,15 +1,3 @@
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __keys {
-    ( { $v:expr } ) => {
-        $crate::TagKey::Name($v)
-    };
-
-    ( $v:expr ) => {
-        $crate::TagKey::Index($v)
-    };
-}
-
 ///
 /// Generates an array of [`TagKey`]s.
 ///
@@ -17,8 +5,7 @@ macro_rules! __keys {
 /// ```
 /// use yarms_nbt::{keys, TagKey};
 ///
-/// // statements enclosed in curly braces are considered strings
-/// let generated = keys!(42, {"test"});
+/// let generated = keys!(42, "test");
 /// let equivalent = [TagKey::Index(42), TagKey::Name("test")];
 ///
 /// assert_eq!(generated, equivalent);
@@ -28,7 +15,7 @@ macro_rules! __keys {
 /// }
 ///
 /// // expressions are allowed, not just literals
-/// let generated = keys!(10, {str_ret_fn()}, 20);
+/// let generated = keys!(10, str_ret_fn(), 20);
 /// let equivalent = [TagKey::Index(10), TagKey::Name(str_ret_fn()), TagKey::Index(20)];
 ///
 /// assert_eq!(generated, equivalent);
@@ -37,8 +24,8 @@ macro_rules! __keys {
 macro_rules! keys {
     () => { [$crate::TagKey::Index(0); 0] };
 
-    ( $( $tail:tt ),+ ) => {[
-        $( $crate::__keys!( $tail ) ),+
+    ( $( $ex:expr ),+ ) => {[
+        $( $crate::TagKey::from($ex) ),+
     ]};
 }
 
@@ -247,7 +234,7 @@ macro_rules! __tag_repr {
 ///     ]
 /// });
 ///
-/// let tag = example.get(&keys!({"list of compounds"}, 1, {"test"}, 0)).expect("tag should exist");
+/// let tag = example.get(&keys!("list of compounds", 1, "test", 0)).expect("tag should exist");
 /// assert_eq!("hello", tag.as_string().expect("tag should be a string"));
 ///
 /// ```
@@ -289,7 +276,7 @@ macro_rules! __tag_repr {
 ///     panic!("example should have been owned and named")
 /// }
 ///
-/// let test_byte = example.get(&keys!({"test"})).expect("tag should have existed");
+/// let test_byte = example.get(&keys!("test")).expect("tag should have existed");
 ///
 /// // Check that the name of the byte "test" is a borrowed variant.
 /// if let Some(Cow::Borrowed(string)) = test_byte.name() {

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "benches",
     "yarms-anvil",
+    "yarms-chunk-loader",
     "yarms-datagen",
     "yarms-datagen-spec",
     "yarms-derive",

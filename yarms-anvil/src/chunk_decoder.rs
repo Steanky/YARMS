@@ -1,18 +1,17 @@
 use crate::buffer::Buffer;
 use crate::loader;
-use crate::loader::{AnvilReadError, AnvilReadResult};
-use libdeflater::Decompressor;
-use std::cell::RefCell;
-use std::io::{Read, Seek, SeekFrom};
-use std::thread_local;
+use core::cell::RefCell;
+use libdeflater::{DecompressionError, Decompressor};
+use yarms_chunk_loader::{ChunkReadError, ChunkReadResult};
 use yarms_nbt::Tag;
 
 ///
-/// Trait specifying something that can decode a single chunk from an Anvil region file (.mca).
-/// Implementations typically need to handle decompressing
+/// Trait specifying something that can decode a single chunk from Anvil region data (such as a .mca
+/// file) from some source type `Source`.
 ///
-/// This library provides a single "standard" implementation: [`Standard`].
-pub trait ChunkDecoder {
+/// This library provides a single "standard" implementation: [`Standard`] (requires the `std`
+/// feature).
+pub trait ChunkDecoder<Source: ?Sized> {
     ///
     /// Given an offset into a region, a chunk size, and appropriate buffers, decodes a single
     /// chunk and passes the corresponding [`Tag`] to `callback`.
@@ -20,22 +19,23 @@ pub trait ChunkDecoder {
     /// # Errors
     /// Should return `Ok` if the callback was successfully invoked. Otherwise, the error type
     /// [`AnvilReadError`] will indicate which problem occurred.
-    fn decode<Buf, Src, Callback>(
+    fn decode<Buf, Callback, R>(
+        &self,
         chunk_offset: u64,
         chunk_size: usize,
-        region: &mut Src,
+        region: &mut Source,
         read_buffer: &mut Buf,
         decompress_buffer: &mut Buf,
         callback: Callback,
-    ) -> AnvilReadResult<()>
+    ) -> ChunkReadResult<R>
     where
-        Buf: Buffer,
-        Callback: for<'tag> FnOnce(Tag<'tag>),
-        Src: Read + Seek;
+        Buf: Buffer + ?Sized,
+        Callback: for<'tag> FnOnce(Tag<'tag>) -> R;
 }
 
+#[cfg(feature = "std")]
 ///
-/// Standard chunk decoder.
+/// Standard chunk decoder for the Anvil format.
 ///
 /// Supports uncompressed, gzip, zlib and (if the feature flag is enabled) lz4 compression schemes.
 /// Decompressors are stored in a thread local.
@@ -43,28 +43,29 @@ pub trait ChunkDecoder {
 /// Uses [`yarms_nbt`] to decode the chunk data.
 pub struct Standard;
 
-impl ChunkDecoder for Standard {
-    fn decode<Buf, Src, Callback>(
+#[cfg(feature = "std")]
+impl<Source: std::io::Read + std::io::Seek + ?Sized> ChunkDecoder<Source> for Standard {
+    fn decode<Buf, Callback, R>(
+        &self,
         chunk_offset: u64,
         chunk_size: usize,
-        region: &mut Src,
+        region: &mut Source,
         read_buffer: &mut Buf,
         decompress_buffer: &mut Buf,
         callback: Callback,
-    ) -> AnvilReadResult<()>
+    ) -> ChunkReadResult<R>
     where
-        Buf: Buffer,
-        Callback: for<'tag> FnOnce(Tag<'tag>),
-        Src: Read + Seek,
+        Buf: Buffer + ?Sized,
+        Callback: for<'tag> FnOnce(Tag<'tag>) -> R,
     {
-        thread_local! {
+        std::thread_local! {
             static DECOMPRESSORS: RefCell<Option<Decompressor>> = const { RefCell::new(None) };
         }
 
         let chunk_data = read_buffer.prepare(chunk_size, true);
 
         // seek to the start of the chunk
-        region.seek(SeekFrom::Start(chunk_offset))?;
+        region.seek(std::io::SeekFrom::Start(chunk_offset))?;
 
         // read the entire chunk, including padding at the end!
         region.read_exact(chunk_data)?;
@@ -73,21 +74,21 @@ impl ChunkDecoder for Standard {
         let exact_length: usize = i32::from_be_bytes(
             chunk_data
                 .get(0..4)
-                .ok_or(AnvilReadError::BadLength)?
+                .ok_or(ChunkReadError::BadLength)?
                 .try_into()
                 .expect("should always slice 4 bytes"),
         )
         .checked_sub(1)
-        .ok_or(AnvilReadError::BadLength)?
+        .ok_or(ChunkReadError::BadLength)?
         .try_into()
-        .map_err(|_| AnvilReadError::BadLength)?;
+        .map_err(|_| ChunkReadError::BadLength)?;
 
-        let compression_type = *chunk_data.get(4).ok_or(AnvilReadError::BadLength)?;
+        let compression_type = *chunk_data.get(4).ok_or(ChunkReadError::BadLength)?;
 
         // this slices off the useless padding at the end
         let chunk_data = chunk_data
             .get(5..5 + exact_length)
-            .ok_or(AnvilReadError::BadLength)?;
+            .ok_or(ChunkReadError::BadLength)?;
 
         let decompressed_chunk_data: &[u8] = match compression_type {
             loader::GZIP_COMPRESSION => {
@@ -97,7 +98,7 @@ impl ChunkDecoder for Standard {
                 let decompressed_len = u32::from_le_bytes(
                     chunk_data
                         .get(chunk_data.len() - 4..)
-                        .ok_or(AnvilReadError::BadLength)?
+                        .ok_or(ChunkReadError::BadLength)?
                         .try_into()
                         .expect("should always slice 4 bytes"),
                 ) as usize;
@@ -107,38 +108,39 @@ impl ChunkDecoder for Standard {
 
                     decompressor
                         .get_or_insert_with(Decompressor::new)
-                        .gzip_decompress(chunk_data, buffer)?;
+                        .gzip_decompress(chunk_data, buffer)
+                        .map_err(|_| ChunkReadError::FailedDecompression)?;
 
-                    Ok::<_, AnvilReadError>(buffer)
+                    Ok::<_, ChunkReadError>(buffer)
                 })?
             }
 
-            loader::ZLIB_COMPRESSION => DECOMPRESSORS.with_borrow_mut(|decompressor| {
-                let decompressor = decompressor.get_or_insert_with(Decompressor::new);
+            loader::ZLIB_COMPRESSION => DECOMPRESSORS
+                .with_borrow_mut(|decompressor| {
+                    let decompressor = decompressor.get_or_insert_with(Decompressor::new);
 
-                let mut try_size = decompress_buffer
-                    .all()
-                    .map_or(chunk_size << 2, |slice| slice.len());
+                    let mut try_size = decompress_buffer.all().map_or(chunk_size << 2, <[u8]>::len);
 
-                let decompressed_length = loop {
-                    // give the decompressor as much space as we have available!
-                    let buffer = decompress_buffer.prepare(try_size, false);
+                    let decompressed_length = loop {
+                        // give the decompressor as much space as we have available!
+                        let buffer = decompress_buffer.prepare(try_size, false);
 
-                    match decompressor.zlib_decompress(chunk_data, buffer) {
-                        Ok(bytes) => break bytes,
+                        match decompressor.zlib_decompress(chunk_data, buffer) {
+                            Ok(bytes) => break bytes,
 
-                        // we don't have enough space, double the buffer capacity and try again
-                        Err(libdeflater::DecompressionError::InsufficientSpace) => try_size <<= 1,
-                        Err(other) => return Err(other),
-                    }
-                };
+                            // we don't have enough space, double the buffer capacity and try again
+                            Err(DecompressionError::InsufficientSpace) => try_size <<= 1,
+                            Err(other) => return Err(other),
+                        }
+                    };
 
-                let all = decompress_buffer
-                    .all()
-                    .expect("should have initialized buffer");
+                    let all = decompress_buffer
+                        .all()
+                        .expect("should have initialized buffer");
 
-                Ok(&all[..decompressed_length])
-            })?,
+                    Ok(&all[..decompressed_length])
+                })
+                .map_err(|_| ChunkReadError::FailedDecompression)?,
 
             loader::NO_COMPRESSION => chunk_data,
 
@@ -149,7 +151,7 @@ impl ChunkDecoder for Standard {
 
                 let bytes_written: usize = std::io::copy(&mut decompress, &mut write)?
                     .try_into()
-                    .map_err(|_| AnvilReadError::BadLength)?;
+                    .map_err(|_| ChunkReadError::BadLength)?;
 
                 drop(write);
 
@@ -160,10 +162,11 @@ impl ChunkDecoder for Standard {
                 &all[..bytes_written]
             }
 
-            ty => return Err(AnvilReadError::UnrecognizedCompressionType(ty)),
+            _ => return Err(ChunkReadError::FailedDecompression),
         };
 
-        callback(yarms_nbt::deserialize_file(decompressed_chunk_data)?);
-        Ok(())
+        Ok(callback(yarms_nbt::deserialize_file(
+            decompressed_chunk_data,
+        )?))
     }
 }

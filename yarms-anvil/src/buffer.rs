@@ -2,7 +2,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 ///
-/// Trait for a very simple mutable buffer of bytes.
+/// Trait for a very simple mutable buffer of bytes. Implementations generally need to allocate
+/// memory.
 pub trait Buffer {
     ///
     /// Provide at least `min` bytes to the caller. The contents of the returned slice are not
@@ -18,15 +19,18 @@ pub trait Buffer {
     fn prepare(&mut self, min: usize, exact: bool) -> &mut [u8];
 
     ///
-    /// If initialized, returns a reference to the entire buffer. Otherwise, returns `None`.
-    fn all(&mut self) -> Option<&mut [u8]>;
+    /// If initialized, returns an immutable reference to the entire buffer. Otherwise, returns
+    /// `None`.
+    ///
+    /// This can be used to access data that was previously written into the buffer.
+    fn all(&self) -> Option<&[u8]>;
 
     #[cfg(feature = "std")]
     ///
     /// Returns a writer that writes into this buffer.
     ///
     /// The writer will start writing at the beginning of the buffer, initializing it if required.
-    /// That is, the writer will overwrite anything already present.
+    /// That is, the writer will overwrite the contents of this buffer, starting from the beginning.
     fn writer(&mut self) -> impl std::io::Write;
 }
 
@@ -56,18 +60,13 @@ impl Buffer for VecBuf {
         }
     }
 
-    fn all(&mut self) -> Option<&mut [u8]> {
-        self.storage.as_deref_mut()
+    fn all(&self) -> Option<&[u8]> {
+        self.storage.as_deref()
     }
 
     #[cfg(feature = "std")]
     fn writer(&mut self) -> impl std::io::Write {
-        let storage = match self.storage {
-            None => self.storage.insert(Vec::new()),
-            Some(ref mut storage) => storage,
-        };
-
-        std::io::Cursor::new(storage)
+        std::io::Cursor::new(self.storage.get_or_insert_with(Vec::new))
     }
 }
 
