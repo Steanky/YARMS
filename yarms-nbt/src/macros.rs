@@ -25,7 +25,7 @@ macro_rules! keys {
     () => { [$crate::TagKey::Index(0); 0] };
 
     ( $( $ex:expr ),+ ) => {[
-        $( $crate::TagKey::from($ex) ),+
+        $( <$crate::TagKey as core::convert::From<_>>::from($ex) ),+
     ]};
 }
 
@@ -119,7 +119,7 @@ macro_rules! __tag_value {
     };
 
     ( $b:block ) => {
-        $crate::alloc::borrow::Cow::Owned($b.into())
+        $crate::alloc::borrow::Cow::Owned(core::convert::Into::into<_>($b))
     };
 
     ( $ex:expr ) => {
@@ -143,7 +143,7 @@ macro_rules! __tag_name {
     };
 
     ( $e:block ) => {
-        core::option::Option::Some($crate::alloc::borrow::Cow::Owned($e.into()))
+        core::option::Option::Some($crate::alloc::borrow::Cow::Owned(core::convert::Into::into<_>($e)))
     };
 
     ( $e:expr ) => {
