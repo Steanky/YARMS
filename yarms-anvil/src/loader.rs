@@ -224,7 +224,7 @@ impl<'pool, Pool, Buffers, Access, Decoder>
         'pool,
         Pool,
         Buffers,
-        dashmap::DashMap<(i32, i32), alloc::vec::Vec<u8>>,
+        alloc::sync::Arc<dashmap::DashMap<(i32, i32), alloc::vec::Vec<u8>>>,
         Access,
         Decoder,
     >
@@ -239,7 +239,7 @@ impl<'pool, Pool, Buffers, Access, Decoder>
         AnvilLoaderBuilder {
             pool: self.pool,
             buffers: self.buffers,
-            header_lookup: Some(dashmap::DashMap::new()),
+            header_lookup: Some(alloc::sync::Arc::new(dashmap::DashMap::new())),
             region_loader: self.region_loader,
             chunk_decoder: self.chunk_decoder,
         }
