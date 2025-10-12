@@ -1,13 +1,11 @@
 use crate::access::Accessor;
-use crate::buffer::{Buffer, VecBuf};
-use crate::chunk_decoder::{ChunkDecoder, Standard};
+use crate::buffer::Buffer;
+use crate::chunk_decoder::ChunkDecoder;
 use crate::header::HeaderLookup;
-use crate::region::{FileRegionLoader, RegionLoader};
+use crate::region::RegionLoader;
 use core::cell::RefCell;
 use derive_builder::Builder;
 use maybe_owned::MaybeOwned;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use yarms_chunk_loader::ChunkReadResult;
 use yarms_chunk_loader::{ChunkLoader, ChunkReadError, ThreadedChunkLoader};
 use yarms_nbt::Tag;
@@ -95,9 +93,37 @@ pub struct AnvilLoader<'pool, Pool, Buffers, Header, Access, Decoder> {
     /// Set an [`Accessor`] providing access to a pair of [`Buffer`] implementations. These are used
     /// as scratch space by the chunk decoder when reading compressed bytes from a source, and
     /// temporarily writing the decompressed result, before decoding the contained NBT data.
+    ///
+    /// If the provided object is not `Send + 'static`, the resulting loader will not
+    /// support asynchronous chunk loads.
+    ///
+    /// When loading asyncronously, note that `buffers` is cloned before each chunk is loaded. Be
+    /// sure to use something like a thread local or `Arc` that can be efficiently cloned.
     buffers: Buffers,
+
+    ///
+    /// Define the storage space for Anvil header data.
+    ///
+    /// This can be anything that implements [`crate::header::HeaderLookup`], but only
+    /// `Send + Sync + 'static` types will work if asynchronous loads are required.
+    ///
+    /// As with `buffers`, this field is cloned before every asynchronous chunk load, so care
+    /// should be taken to ensure an efficient implementation is available.
     header_lookup: Header,
+
+    ///
+    /// Set a [`crate::region::RegionLoader`] that defines how regions are loaded into memory.
+    ///
+    /// A provided implementation is [`crate::region::FileRegionLoader`], which loads region files
+    /// from a Minecraft region directory.
     region_loader: Access,
+
+    ///
+    /// Defines how chunks are actually decoded. Should implement
+    /// [`crate::chunk_decoder::ChunkDecoder`]. Is also ultimately responsible for invoking the
+    /// callback with the NBT data of the chunk.
+    ///
+    /// A provided implementation is [`crate::chunk_decoder::Standard`].
     chunk_decoder: Decoder,
 }
 
