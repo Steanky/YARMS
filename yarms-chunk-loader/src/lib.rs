@@ -115,7 +115,12 @@ impl From<std::io::Error> for ChunkReadError {
 
 impl Display for ChunkReadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("ChunkReadError").field(self).finish()
+        match self {
+            ChunkReadError::Io(e) => write!(f, "I/O error when reading chunk: {e}"),
+            ChunkReadError::BadLength => write!(f, "bad length field when decoding chunk"),
+            ChunkReadError::BadNbt(e) => write!(f, "chunk had invalid NBT data: {e}"),
+            ChunkReadError::FailedDecompression => write!(f, "couldn't decompress chunk"),
+        }
     }
 }
 
@@ -125,7 +130,7 @@ impl Error for ChunkReadError {
             ChunkReadError::Io(cause) => Some(cause),
             ChunkReadError::BadNbt(cause) => Some(cause),
 
-            _ => None
+            _ => None,
         }
     }
 }

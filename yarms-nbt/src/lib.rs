@@ -27,10 +27,10 @@ pub(crate) extern crate std;
 use alloc::borrow::Cow;
 use alloc::format;
 use alloc::vec::Vec;
+use core::error::Error;
 use core::fmt;
 use core::fmt::{Debug, Display, Formatter};
 use hashbrown::hash_map::Entry;
-use core::error::Error;
 
 ///
 /// Public for access from macros, but hidden because it's not supposed to be part of the public

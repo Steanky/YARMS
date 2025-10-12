@@ -1,5 +1,41 @@
 //!
-//! Support for the Anvil format.
+//! Support for the Anvil format [(link)](https://minecraft.wiki/w/Anvil_file_format). Provides an
+//! implementation for loading NBT data from Anvil region files.
+//!
+//! This crate, like most of its siblings, is designed to be highly "composable" and minimally
+//! opinionated. This makes it a bit harder to set up, but can be heavily customized and tweaked to
+//! suit specific needs. To allow for this sort of modularity, the process of decoding a single
+//! chunk is split across several stages. The following flowchart should help illustrate the
+//! process:
+//!
+//! ```skip
+//! ┌─────────────────┐
+//! │ Chunk Requested │
+//! └┬────────────────┘
+//! ┌┴────────────────────────┐
+//! │ Is our loader parallel? ├┐
+//! └┬────────────────────────┘│
+//!  │ Yes                     │ No
+//! ┌┴───────────────────────┐┌┴──────────────────────────┐
+//! │ Proceed in thread pool ││ Proceed on calling thread │
+//! └┬───────────────────────┘└┬──────────────────────────┘
+//!  ├─────────────────────────┘
+//! ┌┴─────────────────────────────────────────────┐
+//! │ Load region corresponding to requested chunk │
+//! └┬─────────────────────────────────────────────┘
+//! ┌┴───────────────────────┐ No ┌────────────────────────┐
+//! │ Does the region exist? ├────┤ No chunk to load, exit │
+//! └┬───────────────────────┘    └────────────────────────┘
+//!  │ Yes
+//! ┌┴────────────────────────────────────────────────────┐
+//! │ Look up the Anvil header data for our region        │
+//! │ If it's not cached, load from our region and cache. │
+//! └┬────────────────────────────────────────────────────┘
+//! ┌┴────────────────────────────────┐
+//! │ Does the requested chunk exist? │
+//! │ (according to the header data)  │
+//! └─────────────────────────────────┘
+//! ```
 
 #![no_std]
 
@@ -83,6 +119,7 @@ pub fn region_to_file_name(region_x: i32, region_z: i32) -> String {
 pub fn region_from_file_name(name: &str) -> Option<(i32, i32)> {
     let mut array = [""; 4];
 
+    // moderately more complex but avoids needing to alloc a Vec
     name.splitn(4, '.')
         .zip(0..)
         .for_each(|(part, idx)| array[idx] = part);

@@ -39,12 +39,12 @@ pub use fixed_size::new_fixed_size_pool;
 
 #[cfg(test)]
 mod tests {
-    use crate::{Pool};
+    use crate::fixed_size::new_fixed_size_pool;
     use crate::std;
     use crate::std::sync::atomic::{AtomicUsize, Ordering};
     use crate::std::sync::mpsc::sync_channel;
     use crate::std::time::Duration;
-    use crate::fixed_size::new_fixed_size_pool;
+    use crate::Pool;
 
     #[test]
     fn simple_run() {

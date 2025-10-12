@@ -7,7 +7,8 @@ use yarms_nbt::Tag;
 
 ///
 /// Trait specifying something that can decode a single chunk from Anvil region data (such as a .mca
-/// file) from some source type `Source`.
+/// file) from some source type `Source`. Implementations are responsible for reading,
+/// decompressing, and decoding chunks.
 ///
 /// This library provides a single "standard" implementation: [`Standard`] (requires the `std`
 /// feature).
@@ -41,6 +42,7 @@ pub trait ChunkDecoder<Source: ?Sized> {
 /// Decompressors are stored in a thread local.
 ///
 /// Uses [`yarms_nbt`] to decode the chunk data.
+#[derive(Copy, Clone)]
 pub struct Standard;
 
 #[cfg(feature = "std")]

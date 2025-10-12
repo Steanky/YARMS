@@ -7,7 +7,8 @@ use yarms_chunk_loader::ChunkReadResult;
 /// Loads Anvil regions.
 pub trait RegionLoader {
     ///
-    /// The type containing the region data. This could be a [`std::fs::File`], for example.
+    /// The type containing the region data. This could be a [`std::fs::File`], for example. This
+    /// is the type returned a successful call to [`RegionLoader::load_region`].
     type Source: ?Sized;
 
     ///
@@ -22,6 +23,17 @@ pub trait RegionLoader {
         region_x: i32,
         region_z: i32,
     ) -> ChunkReadResult<Option<&mut Self::Source>>;
+
+    ///
+    /// If this `RegionLoader` is caching a region, invalidates whatever the cached value is. This
+    /// entails dropping the corresponding [`Self::Source`], if present.
+    ///
+    /// Returns `true` if calling this method actually did anything. False otherwise.
+    /// Implementations that don't perform any caching don't need to implement this; the default
+    /// always returns `false`.
+    fn invalidate_cache(&mut self, _: i32, _: i32) -> bool {
+        false
+    }
 }
 
 #[cfg(feature = "std")]
@@ -57,7 +69,11 @@ impl RegionLoader for FileRegionLoader {
 
                 Ok(Some(std::fs::File::open(buf)?))
             })
-            .map(|option| option.as_mut())
+            .map(Option::as_mut)
+    }
+
+    fn invalidate_cache(&mut self, region_x: i32, region_z: i32) -> bool {
+        self.region_files.pop(&(region_x, region_z)).is_some()
     }
 }
 
@@ -80,7 +96,7 @@ impl FileRegionLoader {
 
         FileRegionLoader {
             region_directory,
-            region_files: LruCache::new(NonZeroUsize::new(max_file_handles).unwrap()),
+            region_files: LruCache::new(NonZeroUsize::try_from(max_file_handles).unwrap()),
         }
     }
 }

@@ -1,13 +1,18 @@
 use crate::access::Accessor;
-use crate::buffer::Buffer;
-use crate::chunk_decoder::ChunkDecoder;
+use crate::buffer::{Buffer, VecBuf};
+use crate::chunk_decoder::{ChunkDecoder, Standard};
 use crate::header::HeaderLookup;
-use crate::region::RegionLoader;
+use crate::region::{FileRegionLoader, RegionLoader};
 use core::cell::RefCell;
+use derive_builder::Builder;
 use maybe_owned::MaybeOwned;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use yarms_chunk_loader::ChunkReadResult;
 use yarms_chunk_loader::{ChunkLoader, ChunkReadError, ThreadedChunkLoader};
 use yarms_nbt::Tag;
+use yarms_threadpool::fixed_size::FixedSizePool;
+use yarms_threadpool::new_fixed_size_pool;
 
 ///
 /// Type indicator showing we should decompress the chunk as `gzip` data. This is part of the Anvil
@@ -79,15 +84,143 @@ where
 
 ///
 /// A [`ChunkLoader`] implementation supporting the Anvil format.
+#[derive(Builder)]
+#[builder(pattern = "owned")]
+#[builder(no_std, setter(prefix = "with"))]
 pub struct AnvilLoader<'pool, Pool, Buffers, Header, Access, Decoder> {
-    thread_pool: MaybeOwned<'pool, Pool>,
+    #[builder(setter(custom))]
+    pool: MaybeOwned<'pool, Pool>,
+
+    ///
+    /// Set an [`Accessor`] providing access to a pair of [`Buffer`] implementations. These are used
+    /// as scratch space by the chunk decoder when reading compressed bytes from a source, and
+    /// temporarily writing the decompressed result, before decoding the contained NBT data.
     buffers: Buffers,
     header_lookup: Header,
     region_loader: Access,
-    decoder: Decoder,
+    chunk_decoder: Decoder,
 }
 
-impl<Pool, Buf, Buffers, Header, Access, Source, Loader, Decoder> ChunkLoader
+impl<'pool, Pool, Buffers, Header, Access, Decoder>
+    AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder>
+where
+    Pool: yarms_threadpool::Pool,
+{
+    ///
+    /// Use an owned [`yarms_threadpool::Pool`] instance to execute chunk loads.
+    ///
+    /// # Thread Safety
+    /// This method is _compatible_ with a multithreaded loader.
+    #[must_use]
+    #[inline]
+    pub fn with_owned_pool(
+        self,
+        pool: Pool,
+    ) -> AnvilLoaderBuilder<'static, Pool, Buffers, Header, Access, Decoder> {
+        AnvilLoaderBuilder {
+            pool: Some(MaybeOwned::Owned(pool)),
+            buffers: self.buffers,
+            header_lookup: self.header_lookup,
+            region_loader: self.region_loader,
+            chunk_decoder: self.chunk_decoder,
+        }
+    }
+
+    ///
+    /// Equivalent of [`Self::with_owned_pool`], but borrows the pool instead. This enables sharing
+    /// a pool across multiple loaders.
+    ///
+    /// # Thread Safety
+    /// This method is _compatible_ with a multithreaded loader.
+    #[must_use]
+    #[inline]
+    pub fn with_borrowed_pool(
+        self,
+        pool: &'_ Pool,
+    ) -> AnvilLoaderBuilder<'_, Pool, Buffers, Header, Access, Decoder> {
+        AnvilLoaderBuilder {
+            pool: Some(MaybeOwned::Borrowed(pool)),
+            buffers: self.buffers,
+            header_lookup: self.header_lookup,
+            region_loader: self.region_loader,
+            chunk_decoder: self.chunk_decoder,
+        }
+    }
+}
+
+impl<Buffers, Header, Access, Decoder>
+    AnvilLoaderBuilder<'static, FixedSizePool, Buffers, Header, Access, Decoder>
+{
+    ///
+    /// Use an owned [`FixedSizePool`] running `threads` threads.
+    ///
+    /// # Thread Safety
+    /// This method is compatible with a multithreaded loader.
+    #[must_use]
+    #[inline]
+    pub fn with_fixed_pool(
+        self,
+        threads: usize,
+    ) -> AnvilLoaderBuilder<'static, FixedSizePool, Buffers, Header, Access, Decoder> {
+        AnvilLoaderBuilder {
+            pool: Some(MaybeOwned::Owned(new_fixed_size_pool(threads))),
+            buffers: self.buffers,
+            header_lookup: self.header_lookup,
+            region_loader: self.region_loader,
+            chunk_decoder: self.chunk_decoder,
+        }
+    }
+}
+
+impl<Buffers, Header, Access, Decoder>
+    AnvilLoaderBuilder<'static, (), Buffers, Header, Access, Decoder>
+{
+    ///
+    /// Don't use a threadpool at all.
+    ///
+    /// # Thread Safety
+    /// This method will cause the resulting builder to be _incompatible_ with parallel loads.
+    #[must_use]
+    #[inline]
+    pub fn with_no_pool(self) -> Self {
+        AnvilLoaderBuilder {
+            pool: Some(MaybeOwned::Owned(())),
+            buffers: self.buffers,
+            header_lookup: self.header_lookup,
+            region_loader: self.region_loader,
+            chunk_decoder: self.chunk_decoder,
+        }
+    }
+}
+
+impl<'pool, Pool, Buffers, Access, Decoder>
+    AnvilLoaderBuilder<
+        'pool,
+        Pool,
+        Buffers,
+        dashmap::DashMap<(i32, i32), alloc::vec::Vec<u8>>,
+        Access,
+        Decoder,
+    >
+{
+    ///
+    /// Uses a [`dashmap::DashMap`] to cache header information and share across threads.
+    ///
+    /// # Thread Safety
+    /// This method is _compatible_ with a parallel loader.
+    #[inline]
+    pub fn with_dashmap_header_lookup(self) -> Self {
+        AnvilLoaderBuilder {
+            pool: self.pool,
+            buffers: self.buffers,
+            header_lookup: Some(dashmap::DashMap::new()),
+            region_loader: self.region_loader,
+            chunk_decoder: self.chunk_decoder,
+        }
+    }
+}
+
+impl<Pool, Buf, Buffers, Header, Source, Access, Loader, Decoder> ChunkLoader
     for AnvilLoader<'_, Pool, Buffers, Header, Access, Decoder>
 where
     Buf: Buffer,
@@ -112,7 +245,7 @@ where
                 &self.buffers,
                 &self.header_lookup,
                 region_loader,
-                &self.decoder,
+                &self.chunk_decoder,
                 chunk_x,
                 chunk_z,
                 callback,
@@ -134,14 +267,14 @@ where
     }
 }
 
-impl<Pool, Buf, Buffers, Header, Access, Source, Loader, Decoder> ThreadedChunkLoader
+impl<Pool, Buf, Buffers, Header, Source, Access, Loader, Decoder> ThreadedChunkLoader
     for AnvilLoader<'_, Pool, Buffers, Header, Access, Decoder>
 where
     Pool: yarms_threadpool::Pool,
     Buf: Buffer,
-    Buffers: Accessor<Target = (Buf, Buf)> + Send + 'static,
+    Buffers: Accessor<Target = (Buf, Buf)> + Clone + Send + 'static,
     Header: HeaderLookup<Source> + Clone + Send + 'static,
-    Access: Accessor<Target = Loader> + Send + 'static,
+    Access: Accessor<Target = Loader> + Clone + Send + 'static,
     Source: ?Sized,
     Loader: RegionLoader<Source = Source>,
     Decoder: ChunkDecoder<Source> + Clone + Send + 'static,
@@ -159,9 +292,9 @@ where
         let loader_accessor = self.region_loader.clone();
         let buffer_accessor = self.buffers.clone();
         let header_lookup = self.header_lookup.clone();
-        let decoder = self.decoder.clone();
+        let decoder = self.chunk_decoder.clone();
 
-        self.thread_pool.submit(move || {
+        self.pool.submit(move || {
             let result = loader_accessor.access(|region_loader| {
                 load_from_region_loader(
                     &buffer_accessor,
@@ -179,4 +312,11 @@ where
             }
         });
     }
+}
+
+///
+/// Constructs a new [`AnvilLoaderBuilder`].
+pub fn builder<'pool, Pool, Buffers, Header, Access, Decoder>(
+) -> AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder> {
+    AnvilLoaderBuilder::create_empty()
 }

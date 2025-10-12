@@ -1,10 +1,10 @@
-use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+use crate::Pool;
+use alloc::boxed::Box;
+use alloc::format;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
-use crate::{Pool};
-use alloc::boxed::Box;
-use alloc::format;
+use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 ///
 /// Creates a new [`FixedSizePool`] instance, that will always maintain exactly `size` running
@@ -14,7 +14,7 @@ use alloc::format;
 /// This function panics if `size` is `0`.
 #[must_use]
 pub fn new_fixed_size_pool(size: usize) -> FixedSizePool {
-    assert_ne!(size, 0, "expected a non-zero size");
+    assert_ne!(size, 0, "expected `size` to be non-zero");
 
     let (tx, rx) = sync_channel::<Thunk>(size);
 
