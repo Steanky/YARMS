@@ -100,9 +100,6 @@ pub struct AnvilLoader<'pool, Pool, Buffers, Header, Access, Decoder> {
     chunk_decoder: Decoder,
 }
 
-///
-/// Builder struct used to construct instances of [`AnvilLoader`]. Use [`builder`] to create an
-/// empty instance for configuration.
 pub struct AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder> {
     pool: Option<MaybeOwned<'pool, Pool>>,
     buffers: Option<Buffers>,
@@ -121,28 +118,6 @@ impl<'pool, Pool, Buffers, Header, Access, Decoder>
             header_lookup: None,
             region_loader: None,
             chunk_decoder: None,
-        }
-    }
-
-    ///
-    /// Consumes this builder and returns a new [`AnvilLoader`].
-    ///
-    /// # Panics
-    /// This function will panic if the builder has any missing (unspecified) fields.
-    pub fn build(self) -> AnvilLoader<'pool, Pool, Buffers, Header, Access, Decoder> {
-        macro_rules! expect {
-            ( $i:ident ) => {
-                self.$i
-                    .expect(stringify!($i, " should have been specified"))
-            };
-        }
-
-        AnvilLoader {
-            pool: expect!(pool),
-            buffers: expect!(buffers),
-            header_lookup: expect!(header_lookup),
-            region_loader: expect!(region_loader),
-            chunk_decoder: expect!(chunk_decoder),
         }
     }
 }
@@ -489,6 +464,3 @@ pub fn builder<'pool, Pool, Buffers, Header, Access, Decoder>(
 ) -> AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder> {
     AnvilLoaderBuilder::create_empty()
 }
-
-#[cfg(test)]
-mod tests {}

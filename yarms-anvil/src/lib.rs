@@ -17,25 +17,68 @@
 //! └┬────────────────────────┘│
 //!  │ Yes                     │ No
 //! ┌┴───────────────────────┐┌┴──────────────────────────┐
-//! │ Proceed in thread pool ││ Proceed on calling thread │
+//! │ Proceed in thread pool ││ Proceed on current thread │
 //! └┬───────────────────────┘└┬──────────────────────────┘
 //!  ├─────────────────────────┘
 //! ┌┴─────────────────────────────────────────────┐
 //! │ Load region corresponding to requested chunk │
 //! └┬─────────────────────────────────────────────┘
 //! ┌┴───────────────────────┐ No ┌────────────────────────┐
-//! │ Does the region exist? ├────┤ No chunk to load, exit │
-//! └┬───────────────────────┘    └────────────────────────┘
+//! │ Does the region exist? ├────┤ No chunk to load, exit ├┐
+//! └┬───────────────────────┘    └────────────────────────┘│
+//!  │ Yes                                                  │
+//! ┌┴───────────────────────────────────────────────────┐  │
+//! │ Look up the Anvil header data for our region       │  │
+//! │ If it's not cached, load from our region and cache │  │
+//! └┬───────────────────────────────────────────────────┘  │
+//! ┌┴────────────────────────────────┐                     │
+//! │ Does the requested chunk exist? │ No                  │
+//! │ (according to the header data)  ├─────────────────────┘
+//! └┬────────────────────────────────┘
 //!  │ Yes
-//! ┌┴────────────────────────────────────────────────────┐
-//! │ Look up the Anvil header data for our region        │
-//! │ If it's not cached, load from our region and cache. │
-//! └┬────────────────────────────────────────────────────┘
-//! ┌┴────────────────────────────────┐
-//! │ Does the requested chunk exist? │
-//! │ (according to the header data)  │
-//! └─────────────────────────────────┘
+//! ┌┴─────────────────────────────────────┐
+//! │ Load the chunk data from the region. │
+//! │ Decompress it if necessary, then     │
+//! │ parse the NBT data                   │
+//! └┬─────────────────────────────────────┘
+//! ┌┴──────────────────────────────────────┐
+//! │ Invoke the callback with the NBT data │
+//! └───────────────────────────────────────┘
 //! ```
+//!
+//! Different traits encapsulate different steps in this diagram.
+//! [`yarms_chunk_loader::ChunkLoader`] implementations (such as [`crate::loader::AnvilLoader`])
+//! accept a request for a chunk at specific chunk coordinates, as well as a callback function to
+//! be invoked when (if?) the chunk is loaded. (A callback is used rather than returning an object
+//! to allow borrowing from internal buffers).
+//!
+//! `ChunkLoader`s that can load in parallel with the calling thread implement
+//! [`yarms_chunk_loader::ThreadedChunkLoader`]. `AnvilLoader` supports parallel loading if it is
+//! constructed using thread-safe components.
+//!
+//! Regardless of whether the loader is parallel or not, after receiving a request for a chunk, the
+//! loader attempts to load a region from a [`crate::region::RegionLoader`]. This corresponds to a
+//! specific .mca file (in the case of Anvil data loaded from a typical Minecraft world). An
+//! individual region covers 32x32 chunks. If the region can't be found, the chunk doesn't exist
+//! and so there's nothing more to do.
+//!
+//! If it does exist, the next step is to look at the Anvil header data, which is part of the
+//! region. The header data contains information about where chunks are located inside of the
+//! region. It also tells us if the chunk exists or not. The header data is cached for future use,
+//! if it wasn't already. Header parsing and caching is managed by [`crate::header::HeaderLookup`].
+//!
+//! If our chunk is present in the region, we load it from the location indicated by the header
+//! data. It may appear in the following formats:
+//! * GZIP
+//! * ZLIB
+//! * Uncompressed
+//! * LZ4 (requires the `lz4` feature)
+//!
+//! A [`crate::chunk_decoder::ChunkDecoder`] implementation is responsible for loading and
+//! decompressing a chunk, after being handed the necessary information to find the data within the
+//! region. Finally, the decoder parses the NBT and invokes the callback function with a tag, which
+//! may contain borrowed data.
+//!
 
 #![no_std]
 

@@ -1,4 +1,3 @@
-use alloc::sync::Arc;
 use core::cell::RefCell;
 
 ///
@@ -11,9 +10,8 @@ use core::cell::RefCell;
 ///
 /// Implementations include:
 /// * `RefCell<T>` (not Sync)
-/// * `Arc<Mutex<T>>` (Sync, but requires `std`)
+/// * `Mutex<T>` (Sync, but requires `std`)
 /// * `&'static LocalKey<T>` (Sync, but requires `std`)
-/// * `CloningAccessor<T: Clone>` (Sync, but copies `T` on every access)
 pub trait Accessor {
     ///
     /// The inner type, to which mutable access is desired.
@@ -57,12 +55,22 @@ impl<Target> Accessor for &'static std::thread::LocalKey<RefCell<Target>> {
 
     #[inline]
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
-        Some(self.with_borrow_mut(callback))
+        self.try_with(move |key| {
+            key.try_borrow_mut()
+                .ok()
+                .map(move |mut cell| callback(&mut *cell))
+        })
+        .ok()?
+    }
+
+    #[inline]
+    fn access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> R {
+        self.with_borrow_mut(callback)
     }
 }
 
 #[cfg(feature = "std")]
-impl<Target: ?Sized> Accessor for Arc<std::sync::Mutex<Target>> {
+impl<Target: ?Sized> Accessor for std::sync::Mutex<Target> {
     type Target = Target;
 
     #[inline]
@@ -79,42 +87,5 @@ impl<Target> Accessor for RefCell<Target> {
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
         let mut guard = self.try_borrow_mut().ok()?;
         Some(callback(&mut *guard))
-    }
-}
-
-///
-/// Wrapper struct to implement [`Accessor`] on any `T: Clone`.
-///
-/// `CloningAccessor` will clone the inner value once every time [`Accessor::access`] is called.
-///
-/// ```
-/// use yarms_anvil::access::CloningAccessor;
-/// use yarms_anvil::access::Accessor;
-///
-/// let value = 10;
-/// let access = CloningAccessor(10);
-///
-/// let result = access.access(|value| {
-///     assert_eq!(*value, 10);
-///     true
-/// });
-///
-/// assert!(result);
-/// assert_eq!(access.0, 10, "underlying value shouldn't change");
-///
-/// ```
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct CloningAccessor<T>(pub T);
-
-impl<T> Accessor for CloningAccessor<T>
-where
-    T: Clone,
-{
-    type Target = T;
-
-    #[inline]
-    fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
-        let mut cloned = self.clone();
-        Some(callback(&mut cloned.0))
     }
 }

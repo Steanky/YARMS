@@ -1,16 +1,19 @@
-use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefCell;
-use core::ops::Deref;
 use yarms_chunk_loader::ChunkReadResult;
 
 ///
-/// A data structure that stores Anvil header information. Implementations will generally perform
-/// caching.
+/// A data structure that stores Anvil header information. Implementations will generally want to
+/// perform caching.
 pub trait HeaderLookup<Source: ?Sized> {
     ///
-    /// Looks up header information, reading from `src` if necessary.
+    /// Looks up header information for the chunk, reading from `src` if necessary. Returns
+    /// `Ok(None)` if the chunk doesn't exist (but otherwise no error occurred).
+    ///
+    /// If the result is `Ok(Some(x))`, the first parameter of the tuple `x` is the offset of the
+    /// chunk within source `src`, and the second parameter is the length of the chunk. Both of
+    /// these values must be in multiples of `4096`.
     ///
     /// # Errors
     /// Returns `Err` if an I/O error occurs, or if the data contained in the target source does
@@ -29,8 +32,15 @@ pub trait HeaderLookup<Source: ?Sized> {
 pub const HEADER_SIZE: usize = 8192;
 
 ///
+///The size. in bytes, of the part of the Anvil header dedicated to storing chunk offsets.
+pub const OFFSET_TABLE_SIZE: usize = 4096;
+
+///
 /// Compute the index into the header table for the specific chunk (world coordinates, not relative
-/// to any region).
+/// to any region). See [`read_table`].
+///
+/// For all values of `chunk_x, chunk_z`, the returned value will be a multiple of 4 in range
+/// `(0..4096)`.
 #[inline]
 #[must_use]
 pub fn table_index(chunk_x: i32, chunk_z: i32) -> usize {
@@ -43,28 +53,27 @@ pub fn table_index(chunk_x: i32, chunk_z: i32) -> usize {
 }
 
 ///
-/// Given a table and an index, returns the recorded chunk offset (first parameter of returned
-/// tuple) and padded chunk length (second parameter).
+/// Given an Anvil header table and an index, returns the recorded chunk offset (first parameter
+/// of returned tuple) and padded chunk length (second parameter).
 ///
 /// Both of these will be multiples of 4096.
-pub fn read_table<Bytes, Table>(table: Table, table_index: usize) -> Option<(u64, usize)>
-where
-    Bytes: AsRef<[u8]>,
-    Table: Deref<Target = Bytes>,
-{
-    let slice = table.as_ref();
+///
+/// # Panics
+/// The length of `table` must be exactly `4096` bytes. If it isn't, this function will panic.
+pub fn read_chunk_offset(table: &[u8], table_index: usize) -> Option<(u64, usize)> {
+    assert_eq!(
+        table.len(),
+        OFFSET_TABLE_SIZE,
+        "chunk offset table must be exactly 4096 bytes"
+    );
 
-    let bytes = &slice[table_index..table_index + 4];
+    let bytes = &table[table_index..table_index + 4];
     let sector_count = bytes[3];
 
     let mut offset = [0_u8; 4];
     offset[1] = bytes[0];
     offset[2] = bytes[1];
     offset[3] = bytes[2];
-
-    // table might be some sort of reference guard or lock:
-    // explicitly drop as soon as we're done with it
-    drop(table);
 
     let offset = u32::from_be_bytes(offset);
     if offset == 0 && sector_count == 0 {
@@ -76,23 +85,6 @@ where
     let chunk_size = usize::from(sector_count) * 4096;
 
     Some((chunk_offset, chunk_size))
-}
-
-#[cfg(feature = "std")]
-impl<Source, Inner> HeaderLookup<Source> for Arc<std::sync::Mutex<Inner>>
-where
-    Source: std::io::Read + std::io::Seek + ?Sized,
-    Inner: HeaderLookup<Source>,
-{
-    #[inline]
-    fn lookup(
-        &self,
-        src: &mut Source,
-        chunk_x: i32,
-        chunk_z: i32,
-    ) -> ChunkReadResult<Option<(u64, usize)>> {
-        self.lock().unwrap().lookup(src, chunk_x, chunk_z)
-    }
 }
 
 #[cfg(feature = "std")]
@@ -108,16 +100,20 @@ where
     ) -> ChunkReadResult<Option<(u64, usize)>> {
         let mut borrow = self.borrow_mut();
 
-        let table = borrow.try_get_or_insert((chunk_x >> 5, chunk_z >> 5), || {
-            let mut vec = vec![0_u8; HEADER_SIZE];
+        let table =
+            borrow.try_get_or_insert::<_, std::io::Error>((chunk_x >> 5, chunk_z >> 5), || {
+                let mut vec = vec![0_u8; HEADER_SIZE];
 
-            src.seek(std::io::SeekFrom::Start(0))?;
-            src.read_exact(&mut vec)?;
+                src.seek(std::io::SeekFrom::Start(0))?;
+                src.read_exact(&mut vec)?;
 
-            Ok::<_, std::io::Error>(vec)
-        })?;
+                Ok(vec)
+            })?;
 
-        Ok(read_table(table, table_index(chunk_x, chunk_z)))
+        Ok(read_chunk_offset(
+            &table[..OFFSET_TABLE_SIZE],
+            table_index(chunk_x, chunk_z),
+        ))
     }
 }
 
@@ -150,6 +146,9 @@ where
                 .downgrade(),
         };
 
-        Ok(read_table(table, table_index(chunk_x, chunk_z)))
+        Ok(read_chunk_offset(
+            &table[..OFFSET_TABLE_SIZE],
+            table_index(chunk_x, chunk_z),
+        ))
     }
 }

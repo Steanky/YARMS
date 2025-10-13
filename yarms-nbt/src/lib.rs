@@ -1,6 +1,9 @@
 //!
 //! Support for NBT (named binary tag) format as used by Minecraft. `no-std` compatible.
 //!
+//! NBT tags can be constructed in code using the [`crate::tag`] macro, or deserialized from binary
+//! data using [`crate::deserialize_network`] or [`crate::deserialize_file`].
+//!
 //! # Features
 //! * `std` (default): Currently only enables [`NbtDeserializeError`] -> `std::io::Error`
 //!   conversion.

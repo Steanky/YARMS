@@ -31,6 +31,10 @@ pub trait RegionLoader {
     /// Returns `true` if calling this method actually did anything. False otherwise.
     /// Implementations that don't perform any caching don't need to implement this; the default
     /// always returns `false`.
+    ///
+    /// Even for implementations that do perform caching, this function may still return false if
+    /// it can be determined that the underlying data did not actually change, and thus
+    /// invalidating the cache would be wasteful.
     fn invalidate_cache(&mut self, _: i32, _: i32) -> bool {
         false
     }
@@ -98,5 +102,32 @@ impl FileRegionLoader {
             region_directory,
             region_files: LruCache::new(NonZeroUsize::try_from(max_file_handles).unwrap()),
         }
+    }
+}
+
+#[cfg(feature = "std")]
+///
+/// Storage type for [`CursorRegionLoader`].
+pub type InMemoryRegions = hashbrown::HashMap<(i32, i32), std::io::Cursor<alloc::vec::Vec<u8>>>;
+
+#[cfg(feature = "std")]
+///
+/// An in-memory [`RegionLoader`]. Useful for testing and perhaps some caching schemes.
+///
+/// This loader will never fail to return `Ok` (though the contained `Option` may still be empty
+/// depending on what data is stored).
+pub struct CursorRegionLoader {
+    regions: InMemoryRegions,
+}
+
+impl RegionLoader for CursorRegionLoader {
+    type Source = std::io::Cursor<alloc::vec::Vec<u8>>;
+
+    fn load_region(
+        &mut self,
+        region_x: i32,
+        region_z: i32,
+    ) -> ChunkReadResult<Option<&mut Self::Source>> {
+        Ok(self.regions.get_mut(&(region_x, region_z)))
     }
 }

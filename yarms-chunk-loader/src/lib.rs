@@ -29,6 +29,10 @@ pub trait ChunkLoader {
     /// Returns `Err` if an error occurred, such as if the chunk data was invalid, or couldn't be
     /// loaded correctly due to an I/O error. When this occurs, implementations should guarantee
     /// that `callback` was _not_ invoked.
+    ///
+    /// # Panics
+    /// This function _may_ panic if the callback function tries to invoke any methods on this
+    /// ChunkLoader instance. Implementations are not required to do so, however.
     fn load_chunk_sync<Callback, R>(
         &self,
         chunk_x: i32,
@@ -47,6 +51,10 @@ pub trait ChunkLoader {
     ///
     /// # Errors
     /// This function may have to perform I/O to check if the chunk exists.
+    ///
+    /// # Panics
+    /// This function _may_ panic if the callback function tries to invoke any methods on this
+    /// ChunkLoader instance. Implementations are not required to do so, however.
     fn has_chunk(&self, chunk_x: i32, chunk_z: i32) -> ChunkReadResult<bool> {
         self.load_chunk_sync(chunk_x, chunk_z, |chunk| chunk.is_some())
     }
@@ -62,6 +70,10 @@ pub trait ThreadedChunkLoader: ChunkLoader {
     /// This method may return immediately, or it may block depending on conditions (such as
     /// available threads or other resource limitations). However, implementations should make a
     /// best-effort attempt to avoid blocking the calling thread.
+    ///
+    /// # Panics
+    /// This function _may_ panic if the callback function(s) try to invoke any methods on this
+    /// ChunkLoader instance. Implementations are not required to do so, however.
     fn load_chunk_async<Call, Err>(
         &self,
         chunk_x: i32,
@@ -79,6 +91,7 @@ pub type ChunkReadResult<T> = Result<T, ChunkReadError>;
 
 ///
 /// Error enum indicating problems that can arise when trying to read a chunk from some source.
+/// Variants may be added to this enum in the future, and so it is marked `non_exhaustive`.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ChunkReadError {

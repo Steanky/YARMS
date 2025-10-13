@@ -9,7 +9,7 @@ yarms-nbt = { path = "../yarms-nbt", default-features = false }
 yarms-threadpool = { path = "../yarms-threadpool", default-features = false }
 
 dashmap = { version = "6.1.0", default-features = false, optional = true }
-derive_builder = { version = "0.20.2", default-features = false, features = [ "alloc" ] }
+hashbrown = { version = "0.16.0", default-features = false }
 libdeflater = { version = "1.24.0", default-features = false }
 lru = { version = "0.16.1", default-features = false, features = [ "hashbrown" ] }
 lz4 = { version = "1.28.1", default-features = false, optional = true }

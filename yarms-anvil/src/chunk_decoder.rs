@@ -36,7 +36,8 @@ pub trait ChunkDecoder<Source: ?Sized> {
 
 #[cfg(feature = "std")]
 ///
-/// Standard chunk decoder for the Anvil format.
+/// Standard chunk decoder for the Anvil format. Implemented for any
+/// `std::io::Read + std::io::Seek`.
 ///
 /// Supports uncompressed, gzip, zlib and (if the feature flag is enabled) lz4 compression schemes.
 /// Decompressors are stored in a thread local.
@@ -46,7 +47,10 @@ pub trait ChunkDecoder<Source: ?Sized> {
 pub struct Standard;
 
 #[cfg(feature = "std")]
-impl<Source: std::io::Read + std::io::Seek + ?Sized> ChunkDecoder<Source> for Standard {
+impl<Source> ChunkDecoder<Source> for Standard
+where
+    Source: std::io::Read + std::io::Seek + ?Sized,
+{
     fn decode<Buf, Callback, R>(
         &self,
         chunk_offset: u64,
@@ -102,7 +106,7 @@ impl<Source: std::io::Read + std::io::Seek + ?Sized> ChunkDecoder<Source> for St
                         .get(chunk_data.len() - 4..)
                         .ok_or(ChunkReadError::BadLength)?
                         .try_into()
-                        .expect("should always slice 4 bytes"),
+                        .unwrap(),
                 ) as usize;
 
                 DECOMPRESSORS.with_borrow_mut(|decompressor| {
