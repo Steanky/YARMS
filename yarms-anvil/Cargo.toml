@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 yarms-chunk-loader = { path = "../yarms-chunk-loader", default-features = false }
 yarms-nbt = { path = "../yarms-nbt", default-features = false }
+yarms-std = { path = "../yarms-std", default-features = false }
 yarms-threadpool = { path = "../yarms-threadpool", default-features = false }
 
 dashmap = { version = "6.1.0", default-features = false, optional = true }
@@ -22,4 +23,4 @@ workspace = true
 default = [ "std", "dashmap-header-lookup" ]
 lz4 = [ "dep:lz4", "std" ]
 dashmap-header-lookup = [ "dep:dashmap", "std" ]
-std = [ "yarms-chunk-loader/std", "yarms-nbt/std",  "yarms-threadpool/std" ]
+std = [ "yarms-chunk-loader/std", "yarms-nbt/std", "yarms-std/std", "yarms-threadpool/std" ]

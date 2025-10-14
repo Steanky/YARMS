@@ -108,7 +108,8 @@ impl FileRegionLoader {
 #[cfg(feature = "std")]
 ///
 /// Storage type for [`CursorRegionLoader`].
-pub type InMemoryRegions = hashbrown::HashMap<(i32, i32), std::io::Cursor<alloc::vec::Vec<u8>>>;
+pub type InMemoryRegions =
+    hashbrown::HashMap<(i32, i32), yarms_std::io::IOWrapper<std::io::Cursor<alloc::vec::Vec<u8>>>>;
 
 #[cfg(feature = "std")]
 ///
@@ -120,8 +121,9 @@ pub struct CursorRegionLoader {
     regions: InMemoryRegions,
 }
 
+#[cfg(feature = "std")]
 impl RegionLoader for CursorRegionLoader {
-    type Source = std::io::Cursor<alloc::vec::Vec<u8>>;
+    type Source = yarms_std::io::IOWrapper<std::io::Cursor<alloc::vec::Vec<u8>>>;
 
     fn load_region(
         &mut self,
@@ -129,5 +131,15 @@ impl RegionLoader for CursorRegionLoader {
         region_z: i32,
     ) -> ChunkReadResult<Option<&mut Self::Source>> {
         Ok(self.regions.get_mut(&(region_x, region_z)))
+    }
+}
+
+#[cfg(feature = "std")]
+impl CursorRegionLoader {
+    ///
+    /// Creates a new [`CursorRegionLoader`] using the provided in-memory chunk data.
+    #[must_use]
+    pub fn new(regions: InMemoryRegions) -> Self {
+        CursorRegionLoader { regions }
     }
 }

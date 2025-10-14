@@ -119,7 +119,7 @@ macro_rules! __tag_value {
     };
 
     ( $b:block ) => {
-        $crate::alloc::borrow::Cow::Owned(core::convert::Into::into<_>($b))
+        $crate::alloc::borrow::Cow::Owned(core::convert::Into::into($b))
     };
 
     ( $ex:expr ) => {
@@ -143,7 +143,9 @@ macro_rules! __tag_name {
     };
 
     ( $e:block ) => {
-        core::option::Option::Some($crate::alloc::borrow::Cow::Owned(core::convert::Into::into<_>($e)))
+        core::option::Option::Some($crate::alloc::borrow::Cow::Owned(
+            core::convert::Into::into($e),
+        ))
     };
 
     ( $e:expr ) => {

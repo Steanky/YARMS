@@ -1,14 +1,15 @@
-use crate::access::Accessor;
 use crate::buffer::Buffer;
 use crate::buffer::VecBuf;
 use crate::chunk_decoder::ChunkDecoder;
 use crate::header::HeaderLookup;
 use crate::region::RegionLoader;
 use core::cell::RefCell;
+use libdeflater::Decompressor;
 use maybe_owned::MaybeOwned;
 use yarms_chunk_loader::ChunkReadResult;
 use yarms_chunk_loader::{ChunkLoader, ChunkReadError, ThreadedChunkLoader};
 use yarms_nbt::Tag;
+use yarms_std::access::Accessor;
 use yarms_threadpool::fixed_size::FixedSizePool;
 use yarms_threadpool::new_fixed_size_pool;
 
@@ -129,6 +130,7 @@ impl<'pool, Pool, Buffers, Header, Access, Decoder>
     ///
     /// # Panics
     /// This function will panic if the builder has any missing (unspecified) fields.
+    #[must_use]
     pub fn build(self) -> AnvilLoader<'pool, Pool, Buffers, Header, Access, Decoder> {
         macro_rules! expect {
             ( $i:ident ) => {
@@ -147,8 +149,8 @@ impl<'pool, Pool, Buffers, Header, Access, Decoder>
     }
 }
 
-impl<'pool, Pool, Buffers, Header, Access, Decoder>
-    AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder>
+impl<Pool, Buffers, Header, Access, Decoder>
+    AnvilLoaderBuilder<'_, Pool, Buffers, Header, Access, Decoder>
 where
     Pool: yarms_threadpool::Pool,
 {
@@ -224,14 +226,15 @@ impl<Buffers, Header, Access, Decoder>
     }
 }
 
-impl<'pool, Pool, Buf, Buffers, Header, Access, Decoder>
-    AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder>
+impl<Pool, Buf, Buffers, Header, Access, Decoder>
+    AnvilLoaderBuilder<'_, Pool, Buffers, Header, Access, Decoder>
 where
     Buf: Buffer,
     Buffers: Accessor<Target = (Buf, Buf)>,
 {
     ///
     /// Use the provided chunk data and decompression buffers.
+    #[must_use]
     pub fn with_buffers(self, buffers: Buffers) -> Self {
         AnvilLoaderBuilder {
             pool: self.pool,
@@ -244,9 +247,9 @@ where
 }
 
 #[cfg(feature = "std")]
-impl<'pool, Pool, Header, Access, Decoder>
+impl<Pool, Header, Access, Decoder>
     AnvilLoaderBuilder<
-        'pool,
+        '_,
         Pool,
         &'static std::thread::LocalKey<RefCell<(VecBuf, VecBuf)>>,
         Header,
@@ -257,6 +260,7 @@ impl<'pool, Pool, Header, Access, Decoder>
     ///
     /// Use thread local chunk data and decompression buffers. This is unnecessary if only a
     /// synchronous loader is needed.
+    #[must_use]
     pub fn with_thread_local_buffers(self) -> Self {
         std::thread_local! {
             static BUFFERS: RefCell<(VecBuf, VecBuf)> = const {
@@ -274,8 +278,25 @@ impl<'pool, Pool, Header, Access, Decoder>
     }
 }
 
-impl<'pool, Pool, Buffers, Header, Access, Loader, Decoder>
-    AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder>
+impl<Pool, Header, Access, Decoder>
+    AnvilLoaderBuilder<'_, Pool, RefCell<(VecBuf, VecBuf)>, Header, Access, Decoder>
+{
+    ///
+    /// Use basic, non-thread-safe buffers.
+    #[must_use]
+    pub fn with_basic_buffers(self) -> Self {
+        AnvilLoaderBuilder {
+            pool: self.pool,
+            buffers: Some(RefCell::new((VecBuf::new(), VecBuf::new()))),
+            header_lookup: self.header_lookup,
+            region_loader: self.region_loader,
+            chunk_decoder: self.chunk_decoder,
+        }
+    }
+}
+
+impl<Pool, Buffers, Header, Access, Loader, Decoder>
+    AnvilLoaderBuilder<'_, Pool, Buffers, Header, Access, Decoder>
 where
     Header: HeaderLookup<Loader::Source>,
     Access: Accessor<Target = Loader>,
@@ -284,6 +305,7 @@ where
     ///
     /// Use the provided [`HeaderLookup`] to read and cache Anvil header data. Its `Source`
     /// type parameter must match the type produced by [`RegionLoader`].
+    #[must_use]
     pub fn with_header_lookup(self, header_lookup: Header) -> Self {
         AnvilLoaderBuilder {
             pool: self.pool,
@@ -296,9 +318,9 @@ where
 }
 
 #[cfg(feature = "dashmap-header-lookup")]
-impl<'pool, Pool, Buffers, Access, Decoder>
+impl<Pool, Buffers, Access, Decoder>
     AnvilLoaderBuilder<
-        'pool,
+        '_,
         Pool,
         Buffers,
         alloc::sync::Arc<dashmap::DashMap<(i32, i32), alloc::vec::Vec<u8>>>,
@@ -311,6 +333,7 @@ impl<'pool, Pool, Buffers, Access, Decoder>
     /// threads, and so might be more efficient than a thread local (which would entail maintaining
     /// a separate cache for every thread).
     #[inline]
+    #[must_use]
     pub fn with_dashmap_header_lookup(self) -> Self {
         AnvilLoaderBuilder {
             pool: self.pool,
@@ -322,8 +345,39 @@ impl<'pool, Pool, Buffers, Access, Decoder>
     }
 }
 
-impl<'pool, Pool, Buffers, Header, Access, Loader, Decoder>
-    AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder>
+impl<Pool, Buffers, Access, Decoder>
+    AnvilLoaderBuilder<
+        '_,
+        Pool,
+        Buffers,
+        core::cell::RefCell<lru::LruCache<(i32, i32), alloc::vec::Vec<u8>>>,
+        Access,
+        Decoder,
+    >
+{
+    ///
+    /// Use a [`lru::LruCache`] with the specified maximum `capacity` to cache Anvil header data.
+    ///
+    /// # Panics
+    /// Panics if `capacity` is 0.
+    #[inline]
+    #[must_use]
+    pub fn with_lru_header_lookup(self, capacity: usize) -> Self {
+        AnvilLoaderBuilder {
+            pool: self.pool,
+            buffers: self.buffers,
+            header_lookup: Some(RefCell::new(lru::LruCache::new(
+                core::num::NonZeroUsize::try_from(capacity)
+                    .expect("capacity should have been non-zero"),
+            ))),
+            region_loader: self.region_loader,
+            chunk_decoder: self.chunk_decoder,
+        }
+    }
+}
+
+impl<Pool, Buffers, Header, Access, Loader, Decoder>
+    AnvilLoaderBuilder<'_, Pool, Buffers, Header, Access, Decoder>
 where
     Header: HeaderLookup<Loader::Source>,
     Access: Accessor<Target = Loader>,
@@ -332,7 +386,11 @@ where
     ///
     /// Use the provided [`RegionLoader`] to load region sources. [`RegionLoader::Source`] must
     /// match the `Source` parameter of the [`HeaderLookup`].
+    ///
+    /// Since this function takes an [`Accessor`], you may pass a `&'static
+    /// LocalKey<RegionLoader>`, `RefCell<RegionLoader>`, or `Arc<Mutex<RegionLoader>>`.
     #[inline]
+    #[must_use]
     pub fn with_region_loader(self, region_loader: Access) -> Self {
         AnvilLoaderBuilder {
             pool: self.pool,
@@ -344,8 +402,8 @@ where
     }
 }
 
-impl<'pool, Pool, Buffers, Header, Access, Loader, Decoder>
-    AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder>
+impl<Pool, Buffers, Header, Access, Loader, Decoder>
+    AnvilLoaderBuilder<'_, Pool, Buffers, Header, Access, Decoder>
 where
     Access: Accessor<Target = Loader>,
     Loader: RegionLoader,
@@ -354,6 +412,7 @@ where
     ///
     /// Use the provided [`ChunkDecoder`] to decode chunks.
     #[inline]
+    #[must_use]
     pub fn with_chunk_decoder(self, chunk_decoder: Decoder) -> Self {
         AnvilLoaderBuilder {
             pool: self.pool,
@@ -365,25 +424,36 @@ where
     }
 }
 
-#[cfg(feature = "std")]
-impl<'pool, Pool, Buffers, Header, Access, Loader>
-    AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, crate::chunk_decoder::Standard>
+impl<Pool, Buffers, Header, Access, Loader, Decompress>
+    AnvilLoaderBuilder<
+        '_,
+        Pool,
+        Buffers,
+        Header,
+        Access,
+        crate::chunk_decoder::Standard<Decompress>,
+    >
 where
     Access: Accessor<Target = Loader>,
-    Loader: RegionLoader<Source = std::fs::File>,
+    Loader: RegionLoader,
+    <Loader as RegionLoader>::Source: yarms_std::io::Read + yarms_std::io::Seek,
+    Decompress: Accessor<Target = Option<Decompressor>>,
 {
     ///
-    /// Use the standard decoder, that decodes from a region file.
+    /// Use the standard decoder, that decodes from a seekable source, using the provided
+    /// decompressor accessor.
     ///
-    /// This requires a [`RegionLoader`] whose source is [`std::fs::File`].
+    /// This requires a [`RegionLoader`] whose source is [`yarms_std::io::Read`] +
+    /// [`yarms_std::io::Seek`].
     #[inline]
-    pub fn with_standard_decoder(self) -> Self {
+    #[must_use]
+    pub fn with_standard_decoder(self, decompressors: Decompress) -> Self {
         AnvilLoaderBuilder {
             pool: self.pool,
             buffers: self.buffers,
             header_lookup: self.header_lookup,
             region_loader: self.region_loader,
-            chunk_decoder: Some(crate::chunk_decoder::Standard),
+            chunk_decoder: Some(crate::chunk_decoder::Standard::new(decompressors)),
         }
     }
 }
@@ -485,10 +555,8 @@ where
 ///
 /// Constructs a new [`AnvilLoaderBuilder`], which can be used to create custom [`AnvilLoader`]
 /// instances.
+#[must_use]
 pub fn builder<'pool, Pool, Buffers, Header, Access, Decoder>(
 ) -> AnvilLoaderBuilder<'pool, Pool, Buffers, Header, Access, Decoder> {
     AnvilLoaderBuilder::create_empty()
 }
-
-#[cfg(test)]
-mod tests {}

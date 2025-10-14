@@ -1,9 +1,9 @@
 use crate::buffer::Buffer;
 use crate::loader;
-use core::cell::RefCell;
 use libdeflater::{DecompressionError, Decompressor};
 use yarms_chunk_loader::{ChunkReadError, ChunkReadResult};
 use yarms_nbt::Tag;
+use yarms_std::access::Accessor;
 
 ///
 /// Trait specifying something that can decode a single chunk from Anvil region data (such as a .mca
@@ -34,22 +34,31 @@ pub trait ChunkDecoder<Source: ?Sized> {
         Callback: for<'tag> FnOnce(Tag<'tag>) -> R;
 }
 
-#[cfg(feature = "std")]
 ///
 /// Standard chunk decoder for the Anvil format. Implemented for any
-/// `std::io::Read + std::io::Seek`.
+/// `yarms_std::io::Read + yarms_nbt::io::Seek`.
 ///
 /// Supports uncompressed, gzip, zlib and (if the feature flag is enabled) lz4 compression schemes.
-/// Decompressors are stored in a thread local.
 ///
 /// Uses [`yarms_nbt`] to decode the chunk data.
 #[derive(Copy, Clone)]
-pub struct Standard;
+pub struct Standard<Decompress> {
+    decompressors: Decompress,
+}
 
-#[cfg(feature = "std")]
-impl<Source> ChunkDecoder<Source> for Standard
+impl<Decompress> Standard<Decompress> {
+    ///
+    /// Creates a new [`Standard`] chunk decoder from the provided decompressor. Note that the
+    /// current only implementation requires this to be `Accessor<Target = Option<Decompressor>>`.
+    pub fn new(decompressors: Decompress) -> Self {
+        Self { decompressors }
+    }
+}
+
+impl<Source, Decompress> ChunkDecoder<Source> for Standard<Decompress>
 where
-    Source: std::io::Read + std::io::Seek + ?Sized,
+    Source: yarms_std::io::Read + yarms_std::io::Seek + ?Sized,
+    Decompress: Accessor<Target = Option<Decompressor>>,
 {
     fn decode<Buf, Callback, R>(
         &self,
@@ -64,14 +73,10 @@ where
         Buf: Buffer + ?Sized,
         Callback: for<'tag> FnOnce(Tag<'tag>) -> R,
     {
-        std::thread_local! {
-            static DECOMPRESSORS: RefCell<Option<Decompressor>> = const { RefCell::new(None) };
-        }
-
         let chunk_data = read_buffer.prepare(chunk_size, true);
 
         // seek to the start of the chunk
-        region.seek(std::io::SeekFrom::Start(chunk_offset))?;
+        region.seek(yarms_std::io::SeekFrom::Start(chunk_offset))?;
 
         // read the entire chunk, including padding at the end!
         region.read_exact(chunk_data)?;
@@ -109,7 +114,7 @@ where
                         .unwrap(),
                 ) as usize;
 
-                DECOMPRESSORS.with_borrow_mut(|decompressor| {
+                self.decompressors.access(|decompressor| {
                     let buffer = decompress_buffer.prepare(decompressed_len, true);
 
                     decompressor
@@ -121,8 +126,9 @@ where
                 })?
             }
 
-            loader::ZLIB_COMPRESSION => DECOMPRESSORS
-                .with_borrow_mut(|decompressor| {
+            loader::ZLIB_COMPRESSION => self
+                .decompressors
+                .access(|decompressor| {
                     let decompressor = decompressor.get_or_insert_with(Decompressor::new);
 
                     let mut try_size = decompress_buffer.all().map_or(chunk_size << 2, <[u8]>::len);

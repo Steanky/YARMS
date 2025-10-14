@@ -1,5 +1,6 @@
 //!
-//! Support for NBT (named binary tag) format as used by Minecraft. `no-std` compatible.
+//! Support for NBT (named binary tag) format as used by Minecraft. `no-std` compatible, but does
+//! require `alloc`.
 //!
 //! NBT tags can be constructed in code using the [`crate::tag`] macro, or deserialized from binary
 //! data using [`crate::deserialize_network`] or [`crate::deserialize_file`].
@@ -115,7 +116,7 @@ pub fn __pair(tag: TagRepr) -> (Cow<str>, TagRepr) {
     reason = "This is public for macro access, and hidden as it's not meant to be used."
 )]
 #[must_use]
-pub fn __wrap(repr: TagRepr) -> Tag {
+pub const fn __wrap(repr: TagRepr) -> Tag {
     Tag { repr }
 }
 
@@ -450,6 +451,7 @@ impl<'tag> TagRepr<'tag> {
         }
     }
 
+    #[inline]
     fn id(&self) -> u8 {
         match self {
             TagRepr::End => TAG_END,
@@ -468,6 +470,7 @@ impl<'tag> TagRepr<'tag> {
         }
     }
 
+    #[inline]
     fn add(&mut self, tag: TagRepr<'tag>, replace: bool) -> Option<TagRepr<'tag>> {
         match self {
             TagRepr::List(_, ty, storage) => {
@@ -502,10 +505,12 @@ impl<'tag> TagRepr<'tag> {
         }
     }
 
+    #[inline]
     fn get(&self, keys: &[TagKey]) -> Option<&TagRepr<'tag>> {
         tag_get_impl!(self, keys, get)
     }
 
+    #[inline]
     fn get_mut(&mut self, keys: &[TagKey]) -> Option<&mut TagRepr<'tag>> {
         tag_get_impl!(self, keys, get_mut)
     }

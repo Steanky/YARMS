@@ -60,6 +60,7 @@ pub fn table_index(chunk_x: i32, chunk_z: i32) -> usize {
 ///
 /// # Panics
 /// The length of `table` must be exactly `4096` bytes. If it isn't, this function will panic.
+#[must_use]
 pub fn read_chunk_offset(table: &[u8], table_index: usize) -> Option<(u64, usize)> {
     assert_eq!(
         table.len(),
@@ -90,7 +91,7 @@ pub fn read_chunk_offset(table: &[u8], table_index: usize) -> Option<(u64, usize
 #[cfg(feature = "std")]
 impl<Source> HeaderLookup<Source> for RefCell<lru::LruCache<(i32, i32), Vec<u8>>>
 where
-    Source: std::io::Read + std::io::Seek + ?Sized,
+    Source: yarms_std::io::Read + yarms_std::io::Seek + ?Sized,
 {
     fn lookup(
         &self,
@@ -100,15 +101,17 @@ where
     ) -> ChunkReadResult<Option<(u64, usize)>> {
         let mut borrow = self.borrow_mut();
 
-        let table =
-            borrow.try_get_or_insert::<_, std::io::Error>((chunk_x >> 5, chunk_z >> 5), || {
+        let table = borrow.try_get_or_insert::<_, yarms_std::io::Error>(
+            (chunk_x >> 5, chunk_z >> 5),
+            || {
                 let mut vec = vec![0_u8; HEADER_SIZE];
 
-                src.seek(std::io::SeekFrom::Start(0))?;
+                src.seek(yarms_std::io::SeekFrom::Start(0))?;
                 src.read_exact(&mut vec)?;
 
                 Ok(vec)
-            })?;
+            },
+        )?;
 
         Ok(read_chunk_offset(
             &table[..OFFSET_TABLE_SIZE],
@@ -120,7 +123,7 @@ where
 #[cfg(feature = "dashmap-header-lookup")]
 impl<Source> HeaderLookup<Source> for dashmap::DashMap<(i32, i32), Vec<u8>>
 where
-    Source: std::io::Read + std::io::Seek + ?Sized,
+    Source: yarms_std::io::Read + yarms_std::io::Seek + ?Sized,
 {
     fn lookup(
         &self,
@@ -138,7 +141,7 @@ where
                 .or_try_insert_with::<yarms_chunk_loader::ChunkReadError>(|| {
                     let mut vec = vec![0_u8; HEADER_SIZE];
 
-                    src.seek(std::io::SeekFrom::Start(0))?;
+                    src.seek(yarms_std::io::SeekFrom::Start(0))?;
                     src.read_exact(&mut vec)?;
 
                     Ok(vec)
@@ -150,5 +153,37 @@ where
             &table[..OFFSET_TABLE_SIZE],
             table_index(chunk_x, chunk_z),
         ))
+    }
+}
+
+impl<Source, Inner> HeaderLookup<Source> for alloc::sync::Arc<Inner>
+where
+    Inner: HeaderLookup<Source>,
+{
+    #[inline]
+    fn lookup(
+        &self,
+        src: &mut Source,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> ChunkReadResult<Option<(u64, usize)>> {
+        let inner = alloc::sync::Arc::as_ref(self);
+        inner.lookup(src, chunk_x, chunk_z)
+    }
+}
+
+impl<Source, Inner> HeaderLookup<Source> for alloc::rc::Rc<Inner>
+where
+    Inner: HeaderLookup<Source>,
+{
+    #[inline]
+    fn lookup(
+        &self,
+        src: &mut Source,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> ChunkReadResult<Option<(u64, usize)>> {
+        let inner = alloc::rc::Rc::as_ref(self);
+        inner.lookup(src, chunk_x, chunk_z)
     }
 }

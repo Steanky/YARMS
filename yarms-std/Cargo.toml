@@ -1,0 +1,13 @@
+[package]
+name = "yarms-std"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
+
+[features]
+default = [ "std" ]
+std = [ ]

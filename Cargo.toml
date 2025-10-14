@@ -12,6 +12,7 @@ members = [
     "yarms-packet",
     "yarms-packet-io",
     "yarms-protocol" ,
+    "yarms-std",
     "yarms-threadpool",
     "yarms-util-future",
     "yarms-wiki-scraper"

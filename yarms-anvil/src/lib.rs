@@ -107,10 +107,6 @@ pub mod region;
 /// Anvil headers (chunk table).
 pub mod header;
 
-///
-/// Utility to provide scoped mutable access to types.
-pub mod access;
-
 use alloc::string::String;
 use alloc::string::ToString;
 use core::str::FromStr;
@@ -175,4 +171,60 @@ pub fn region_from_file_name(name: &str) -> Option<(i32, i32)> {
     let region_z = i32::from_str(array[2]).ok()?;
 
     Some((region_x, region_z))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::region::CursorRegionLoader;
+    use std::cell::RefCell;
+    use std::io::Cursor;
+    use std::vec::Vec;
+    use yarms_chunk_loader::ChunkLoader;
+    use yarms_nbt::keys;
+    use yarms_nbt::tag;
+
+    #[test]
+    fn simple_load() {
+        let anvil_bytes = include_bytes!("r.0.0.mca");
+        let anvil_bytes = Vec::from(anvil_bytes);
+
+        let cursor = Cursor::new(anvil_bytes);
+
+        let mut map = hashbrown::HashMap::with_capacity(1);
+        map.insert((0, 0), yarms_std::io::IOWrapper(cursor));
+
+        let loader = crate::loader::builder()
+            .with_no_pool()
+            .with_region_loader(RefCell::new(CursorRegionLoader::new(map)))
+            .with_standard_decoder(RefCell::new(None))
+            .with_lru_header_lookup(1)
+            .with_basic_buffers()
+            .build();
+
+        let result = loader.load_chunk_sync(0, 0, |chunk_opt| {
+            let data = chunk_opt.expect("chunk data should have been present");
+            assert_eq!(data.get(&keys!("zPos")), Some(&tag!(Int["zPos"]: 0)));
+            assert_eq!(data.get(&keys!("xPos")), Some(&tag!(Int["xPos"]: 0)));
+
+            // the chunk data has a book in it. make sure we loaded everything correctly
+            // by verifying that the contents are as expected.
+            assert_eq!(data.get(&keys!("block_entities",
+                0,
+                "Items",
+                0,
+                "components",
+                "minecraft:written_book_content",
+                "pages",
+                0,
+                "raw")),
+                Some(&tag!(String["raw"]: "This is an item used for testing.\nHello yarms-anvil-loader!")));
+
+            true
+        });
+
+        assert!(
+            result.expect("chunk should have loaded without error"),
+            "returned value wasn't true"
+        );
+    }
 }

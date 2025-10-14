@@ -1875,6 +1875,7 @@ dependencies = [
  "maybe-owned",
  "yarms-chunk-loader",
  "yarms-nbt",
+ "yarms-std",
  "yarms-threadpool",
 ]
 
@@ -1883,6 +1884,7 @@ name = "yarms-chunk-loader"
 version = "0.1.0"
 dependencies = [
  "yarms-nbt",
+ "yarms-std",
 ]
 
 [[package]]
@@ -1964,6 +1966,10 @@ dependencies = [
  "yarms-identifier",
  "yarms-nbt",
 ]
+
+[[package]]
+name = "yarms-std"
+version = "0.1.0"
 
 [[package]]
 name = "yarms-threadpool"

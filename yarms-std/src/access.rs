@@ -1,7 +1,8 @@
 use core::cell::RefCell;
 
 ///
-/// Something that provides scoped mutable access to a single target type.
+/// Something that provides scoped mutable access to a single target type, while only requiring a
+/// shared reference.
 ///
 /// There exist a variety of `Accessor` implementations. The motivation for this trait is to enable
 /// a common API between e.g. thread locals (which provide threadsafe mutable access to some inner
@@ -9,9 +10,11 @@ use core::cell::RefCell;
 /// with only a shared reference).
 ///
 /// Implementations include:
-/// * `RefCell<T>` (not Sync)
-/// * `Mutex<T>` (Sync, but requires `std`)
-/// * `&'static LocalKey<T>` (Sync, but requires `std`)
+/// * `RefCell<T>` (not Sync even if T is)
+/// * `Mutex<T>` (Sync for any T, but requires `std`)
+/// * `'static LocalKey<T>` (Sync for any T, but requires `std`)
+/// * `Arc<T: Accessor>` (Sync if T is)
+/// * `Rc<T: Accessor>` (not Sync even if T is)
 pub trait Accessor {
     ///
     /// The inner type, to which mutable access is desired.
@@ -23,7 +26,8 @@ pub trait Accessor {
     ///
     /// # Panics
     /// May panic if the target cannot be accessed. See [`Accessor::try_access`] for a
-    /// non-panicking variant.
+    /// non-panicking variant. For example, trying to access an already-borrowed `RefCell` would
+    /// result in a panic here.
     #[inline]
     fn access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> R {
         self.try_access(callback)
@@ -32,11 +36,11 @@ pub trait Accessor {
 
     ///
     /// Non-panicking version of [`Accessor::access`]. Returns `None` if the value could not be
-    /// accessed.
+    /// accessed for any reason.
     ///
     /// ```
     /// use std::cell::RefCell;
-    /// use yarms_anvil::access::Accessor;
+    /// use yarms_std::access::Accessor;
     /// let mut access = RefCell::new(10);
     ///
     /// let guard = access.borrow_mut();
@@ -55,10 +59,10 @@ impl<Target> Accessor for &'static std::thread::LocalKey<RefCell<Target>> {
 
     #[inline]
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
-        self.try_with(move |key| {
+        self.try_with(|key| {
             key.try_borrow_mut()
                 .ok()
-                .map(move |mut cell| callback(&mut *cell))
+                .map(|mut cell| callback(&mut *cell))
         })
         .ok()?
     }
@@ -70,7 +74,7 @@ impl<Target> Accessor for &'static std::thread::LocalKey<RefCell<Target>> {
 }
 
 #[cfg(feature = "std")]
-impl<Target: ?Sized> Accessor for std::sync::Mutex<Target> {
+impl<Target> Accessor for std::sync::Mutex<Target> {
     type Target = Target;
 
     #[inline]
@@ -87,5 +91,31 @@ impl<Target> Accessor for RefCell<Target> {
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
         let mut guard = self.try_borrow_mut().ok()?;
         Some(callback(&mut *guard))
+    }
+}
+
+impl<Inner> Accessor for alloc::sync::Arc<Inner>
+where
+    Inner: Accessor,
+{
+    type Target = <Inner as Accessor>::Target;
+
+    #[inline]
+    fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
+        let inner = alloc::sync::Arc::as_ref(self);
+        inner.try_access(callback)
+    }
+}
+
+impl<Inner> Accessor for alloc::rc::Rc<Inner>
+where
+    Inner: Accessor,
+{
+    type Target = <Inner as Accessor>::Target;
+
+    #[inline]
+    fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
+        let inner = alloc::rc::Rc::as_ref(self);
+        inner.try_access(callback)
     }
 }

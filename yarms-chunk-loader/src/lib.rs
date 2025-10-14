@@ -32,7 +32,7 @@ pub trait ChunkLoader {
     ///
     /// # Panics
     /// This function _may_ panic if the callback function tries to invoke any methods on this
-    /// ChunkLoader instance. Implementations are not required to do so, however.
+    /// `ChunkLoader` instance. Implementations are not required to do so, however.
     fn load_chunk_sync<Callback, R>(
         &self,
         chunk_x: i32,
@@ -54,7 +54,7 @@ pub trait ChunkLoader {
     ///
     /// # Panics
     /// This function _may_ panic if the callback function tries to invoke any methods on this
-    /// ChunkLoader instance. Implementations are not required to do so, however.
+    /// `ChunkLoader` instance. Implementations are not required to do so, however.
     fn has_chunk(&self, chunk_x: i32, chunk_z: i32) -> ChunkReadResult<bool> {
         self.load_chunk_sync(chunk_x, chunk_z, |chunk| chunk.is_some())
     }
@@ -73,7 +73,7 @@ pub trait ThreadedChunkLoader: ChunkLoader {
     ///
     /// # Panics
     /// This function _may_ panic if the callback function(s) try to invoke any methods on this
-    /// ChunkLoader instance. Implementations are not required to do so, however.
+    /// `ChunkLoader` instance. Implementations are not required to do so, however.
     fn load_chunk_async<Call, Err>(
         &self,
         chunk_x: i32,
@@ -98,7 +98,7 @@ pub enum ChunkReadError {
     #[cfg(feature = "std")]
     ///
     /// An I/O related error occurred.
-    Io(std::io::Error),
+    Io(yarms_std::io::Error),
 
     ///
     /// The length of some piece of data was not as expected.
@@ -119,10 +119,16 @@ impl From<NbtDeserializeError> for ChunkReadError {
     }
 }
 
+impl From<yarms_std::io::Error> for ChunkReadError {
+    fn from(value: yarms_std::io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
 #[cfg(feature = "std")]
 impl From<std::io::Error> for ChunkReadError {
     fn from(value: std::io::Error) -> Self {
-        Self::Io(value)
+        Self::Io(yarms_std::io::Error::Io(value))
     }
 }
 
@@ -142,7 +148,6 @@ impl Error for ChunkReadError {
         match self {
             ChunkReadError::Io(cause) => Some(cause),
             ChunkReadError::BadNbt(cause) => Some(cause),
-
             _ => None,
         }
     }
