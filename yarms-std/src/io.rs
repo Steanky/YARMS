@@ -140,10 +140,12 @@ pub trait Write {
 }
 
 #[cfg(feature = "std")]
+#[repr(transparent)]
 ///
 /// Generic wrapper struct that can contain a `std::io::{Seek, Read, Write}`.
 pub struct IOWrapper<T>(pub T);
 
+#[cfg(feature = "std")]
 impl<T> Seek for IOWrapper<T>
 where
     T: std::io::Seek,
@@ -154,6 +156,7 @@ where
     }
 }
 
+#[cfg(feature = "std")]
 impl<T> Read for IOWrapper<T>
 where
     T: std::io::Read,
@@ -169,6 +172,7 @@ where
     }
 }
 
+#[cfg(feature = "std")]
 impl<T> Write for IOWrapper<T>
 where
     T: std::io::Write,

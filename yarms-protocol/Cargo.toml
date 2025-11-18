@@ -5,8 +5,9 @@ edition.workspace = true
 description = "Fundamental utilities and simple types for implementing the Minecraft protocol."
 
 [dependencies]
-yarms-identifier = { path = "../yarms-identifier", optional = true }
-yarms-nbt = { path = "../yarms-nbt", optional = true }
+yarms-identifier = { path = "../yarms-identifier", default-features=false, optional = true }
+yarms-nbt = { path = "../yarms-nbt", default-features = false, optional = true }
+yarms-std = { path = "../yarms-std", default-features = false, optional = true, features = [ "buf-fill" ] }
 
 bytes = { version = "1.10.1", default-features = false }
 libdeflater = { version = "1.23.0", default-features = false, optional = true }
@@ -15,6 +16,7 @@ libdeflater = { version = "1.23.0", default-features = false, optional = true }
 default = [ "std", "identifier", "nbt" ]
 
 bmi2-intrinsics = []
+buf-fill = [ "dep:yarms-std" ]
 identifier = [ "dep:yarms-identifier" ]
 libdeflater = [ "dep:libdeflater" ]
 nbt = [ "dep:yarms-nbt" ]

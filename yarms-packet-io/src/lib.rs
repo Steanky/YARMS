@@ -27,14 +27,6 @@ compile_error!("This crate does not support 16-bit targets!");
 pub mod crypto;
 
 ///
-/// Support for filling a [`bytes::BufMut`] with a specified minimum number of bytes.
-pub mod buf_fill;
-
-///
-/// Support for types that can be expressed as an iterator over mutable byte chunks.
-pub mod disjoint;
-
-///
 /// Low-level packet encoding/decoding from byte slices.
 pub mod codec;
 

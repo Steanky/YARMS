@@ -266,6 +266,20 @@ impl From<libdeflater::DecompressionError> for ReadError {
     }
 }
 
+#[cfg(feature = "buf-fill")]
+impl From<yarms_std::buf_fill::FillError> for yarms_protocol::ReadError {
+    fn from(error: FillError) -> Self {
+        match error {
+            FillError::NotEnoughBytes => {
+                yarms_protocol::ReadError::new(ErrorReason::NotEnoughBytes)
+            }
+
+            #[cfg(feature = "std")]
+            FillError::Io(io) => yarms_protocol::ReadError::new(ErrorReason::Io(io)),
+        }
+    }
+}
+
 impl From<TryGetError> for ReadError {
     fn from(_: TryGetError) -> Self {
         ReadError::new(ErrorReason::NotEnoughBytes)

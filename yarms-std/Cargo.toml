@@ -4,10 +4,19 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+bytes = { version = "1.10.0", default-features = false, optional = true }
+tokio = { version = "1.43.0", default-features = false, optional = true, features = [ "io-util" ] }
+
+[dev-dependencies]
+yarms-util-future = { path = "../yarms-util-future" }
 
 [lints]
 workspace = true
 
 [features]
-default = [ "std" ]
+default = [ "buf-fill", "disjoint", "std", "tokio" ]
+bound = []
+buf-fill = [ "dep:bytes" ]
+disjoint = [ "dep:bytes", "bound" ]
 std = [ ]
+tokio = [ "buf-fill", "dep:tokio" ]

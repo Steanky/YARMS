@@ -8,13 +8,6 @@ use core::cell::RefCell;
 /// a common API between e.g. thread locals (which provide threadsafe mutable access to some inner
 /// type) and something like a [`RefCell`] (that isn't threadsafe but does provide mutable access
 /// with only a shared reference).
-///
-/// Implementations include:
-/// * `RefCell<T>` (not Sync even if T is)
-/// * `Mutex<T>` (Sync for any T, but requires `std`)
-/// * `'static LocalKey<T>` (Sync for any T, but requires `std`)
-/// * `Arc<T: Accessor>` (Sync if T is)
-/// * `Rc<T: Accessor>` (not Sync even if T is)
 pub trait Accessor {
     ///
     /// The inner type, to which mutable access is desired.
@@ -54,8 +47,8 @@ pub trait Accessor {
 }
 
 #[cfg(feature = "std")]
-impl<Target> Accessor for &'static std::thread::LocalKey<RefCell<Target>> {
-    type Target = Target;
+impl<T> Accessor for &'static std::thread::LocalKey<RefCell<T>> {
+    type Target = T;
 
     #[inline]
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
@@ -74,8 +67,11 @@ impl<Target> Accessor for &'static std::thread::LocalKey<RefCell<Target>> {
 }
 
 #[cfg(feature = "std")]
-impl<Target> Accessor for std::sync::Mutex<Target> {
-    type Target = Target;
+impl<T> Accessor for std::sync::Mutex<T>
+where
+    T: ?Sized,
+{
+    type Target = T;
 
     #[inline]
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
@@ -84,8 +80,11 @@ impl<Target> Accessor for std::sync::Mutex<Target> {
     }
 }
 
-impl<Target> Accessor for RefCell<Target> {
-    type Target = Target;
+impl<T> Accessor for RefCell<T>
+where
+    T: ?Sized,
+{
+    type Target = T;
 
     #[inline]
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
@@ -94,28 +93,74 @@ impl<Target> Accessor for RefCell<Target> {
     }
 }
 
-impl<Inner> Accessor for alloc::sync::Arc<Inner>
+impl<T> Accessor for alloc::sync::Arc<T>
 where
-    Inner: Accessor,
+    T: Accessor + ?Sized,
 {
-    type Target = <Inner as Accessor>::Target;
+    type Target = <T as Accessor>::Target;
 
     #[inline]
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
-        let inner = alloc::sync::Arc::as_ref(self);
-        inner.try_access(callback)
+        T::try_access(self, callback)
     }
 }
 
-impl<Inner> Accessor for alloc::rc::Rc<Inner>
+impl<T> Accessor for alloc::rc::Rc<T>
 where
-    Inner: Accessor,
+    T: Accessor + ?Sized,
 {
-    type Target = <Inner as Accessor>::Target;
+    type Target = <T as Accessor>::Target;
 
     #[inline]
     fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
-        let inner = alloc::rc::Rc::as_ref(self);
-        inner.try_access(callback)
+        T::try_access(self, callback)
+    }
+}
+
+impl<T> Accessor for alloc::boxed::Box<T>
+where
+    T: Accessor + ?Sized,
+{
+    type Target = <T as Accessor>::Target;
+
+    #[inline]
+    fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
+        T::try_access(self, callback)
+    }
+}
+
+impl<T> Accessor for alloc::borrow::Cow<'_, T>
+where
+    T: Accessor + Clone + ?Sized,
+{
+    type Target = <T as Accessor>::Target;
+
+    #[inline]
+    fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
+        T::try_access(self, callback)
+    }
+}
+
+impl<T> Accessor for &T
+where
+    T: Accessor + ?Sized,
+{
+    type Target = <T as Accessor>::Target;
+
+    #[inline]
+    fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
+        T::try_access(self, callback)
+    }
+}
+
+impl<T> Accessor for &mut T
+where
+    T: Accessor + ?Sized,
+{
+    type Target = <T as Accessor>::Target;
+
+    #[inline]
+    fn try_access<Call: FnOnce(&mut Self::Target) -> R, R>(&self, callback: Call) -> Option<R> {
+        T::try_access(self, callback)
     }
 }

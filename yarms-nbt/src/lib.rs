@@ -230,7 +230,8 @@ pub struct Tag<'a> {
 }
 
 ///
-/// Internal representation of a tag. Should not be accessed by end users.
+/// Internal representation of a tag. Should not be accessed by end users. Is only public for macro
+/// access.
 ///
 /// This enum may be transmuted to [`Tag`].
 #[derive(Clone, PartialEq)]
@@ -1171,7 +1172,7 @@ pub fn deserialize_file<'tag, 'data: 'tag>(
     clippy::too_many_lines,
     reason = "This function uses a lot of inline macros."
 )]
-#[inline]
+#[inline(always)]
 fn deserialize_internal<'tag, 'data: 'tag, const NETWORK_VARIANT: bool>(
     mut bytes: &'data [u8],
 ) -> Result<TagRepr<'tag>, NbtDeserializeError> {

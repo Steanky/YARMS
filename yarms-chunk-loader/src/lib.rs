@@ -6,6 +6,8 @@
 //!
 //! # Features
 //! * `std` (default): Enables conversion between `std::io::Error` and [`ChunkReadError`].
+//! * `buf-fill` (default): Enables conversion between [`yarms_std::buf_fill::FillError`] and
+//! [`ChunkReadError`].
 
 #![no_std]
 
@@ -14,79 +16,11 @@ pub(crate) extern crate std;
 
 use core::error::Error;
 use core::fmt::{Display, Formatter};
-use yarms_nbt::{NbtDeserializeError, Tag};
+use yarms_nbt::NbtDeserializeError;
 
 ///
-/// Something that can load Minecraft chunk data.
-pub trait ChunkLoader {
-    ///
-    /// Loads a chunk from somewhere, often the filesystem, but that's not a requirement. `callback`
-    /// is invoked with `None` if the chunk can't be loaded, and `Some` with a [`Tag`] containing
-    /// the chunk data (see [chunk format](https://minecraft.wiki/w/Chunk_format) on the wiki). In
-    /// either case, the method returns whatever `callback` did.
-    ///
-    /// # Errors
-    /// Returns `Err` if an error occurred, such as if the chunk data was invalid, or couldn't be
-    /// loaded correctly due to an I/O error. When this occurs, implementations should guarantee
-    /// that `callback` was _not_ invoked.
-    ///
-    /// # Panics
-    /// This function _may_ panic if the callback function tries to invoke any methods on this
-    /// `ChunkLoader` instance. Implementations are not required to do so, however.
-    fn load_chunk_sync<Callback, R>(
-        &self,
-        chunk_x: i32,
-        chunk_z: i32,
-        callback: Callback,
-    ) -> ChunkReadResult<R>
-    where
-        Callback: for<'tag> FnOnce(Option<Tag<'tag>>) -> R;
-
-    ///
-    /// Checks if the chunk exists without loading it.
-    ///
-    /// The default implementation just calls [`ChunkLoader::load_chunk_sync`] and checks if `None`
-    /// is received by the callback. Implementations are encouraged to override this behavior if it
-    /// enhances efficiency.
-    ///
-    /// # Errors
-    /// This function may have to perform I/O to check if the chunk exists.
-    ///
-    /// # Panics
-    /// This function _may_ panic if the callback function tries to invoke any methods on this
-    /// `ChunkLoader` instance. Implementations are not required to do so, however.
-    fn has_chunk(&self, chunk_x: i32, chunk_z: i32) -> ChunkReadResult<bool> {
-        self.load_chunk_sync(chunk_x, chunk_z, |chunk| chunk.is_some())
-    }
-}
-
-///
-/// Extension of [`ChunkLoader`] that specifies asynchronous methods of chunk loading.
-pub trait ThreadedChunkLoader: ChunkLoader {
-    ///
-    /// Equivalent to [`ChunkLoader::load_chunk_sync`] but offloads the chunk loading to another
-    /// thread.
-    ///
-    /// This method may return immediately, or it may block depending on conditions (such as
-    /// available threads or other resource limitations). However, implementations should make a
-    /// best-effort attempt to avoid blocking the calling thread.
-    ///
-    /// # Panics
-    /// This function _may_ panic if the callback function(s) try to invoke any methods on this
-    /// `ChunkLoader` instance. Implementations are not required to do so, however.
-    fn load_chunk_async<Call, Err>(
-        &self,
-        chunk_x: i32,
-        chunk_z: i32,
-        callback: Call,
-        err_callback: Err,
-    ) where
-        Call: for<'tag> FnOnce(Option<Tag<'tag>>) + Send + 'static,
-        Err: FnOnce(ChunkReadError) + Send + 'static;
-}
-
-///
-/// Result type returned by functions that decode Minecraft chunks.
+/// Result type returned by functions that decode Minecraft chunks. The error type is
+/// [`ChunkReadError`].
 pub type ChunkReadResult<T> = Result<T, ChunkReadError>;
 
 ///
@@ -95,27 +29,37 @@ pub type ChunkReadResult<T> = Result<T, ChunkReadError>;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ChunkReadError {
-    #[cfg(feature = "std")]
     ///
-    /// An I/O related error occurred.
+    /// An I/O related error occurred. This variant is a thin wrapper around
+    /// [`yarms_std::io::Error`].
     Io(yarms_std::io::Error),
+
+    #[cfg(feature = "buf-fill")]
+    ///
+    /// A (usually I/O related) error occurred while filling up a buffer. This variant is a thin
+    /// wrapper around [`yarms_std::buf_fill::FillError`].
+    Fill(yarms_std::buf_fill::FillError),
 
     ///
     /// The length of some piece of data was not as expected.
-    BadLength,
+    Length,
+
+    BadHeader,
 
     ///
     /// Chunk NBT data was invalid.
-    BadNbt(NbtDeserializeError),
+    Nbt(NbtDeserializeError),
+
+    UnknownCompressionType(u8),
 
     ///
     /// Couldn't decompress the chunk.
-    FailedDecompression,
+    Decompression,
 }
 
 impl From<NbtDeserializeError> for ChunkReadError {
     fn from(value: NbtDeserializeError) -> Self {
-        Self::BadNbt(value)
+        Self::Nbt(value)
     }
 }
 
@@ -132,13 +76,33 @@ impl From<std::io::Error> for ChunkReadError {
     }
 }
 
+#[cfg(feature = "std")]
+impl From<ChunkReadError> for std::io::Error {
+    fn from(value: ChunkReadError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, value)
+    }
+}
+
+#[cfg(feature = "buf-fill")]
+impl From<yarms_std::buf_fill::FillError> for ChunkReadError {
+    fn from(value: yarms_std::buf_fill::FillError) -> Self {
+        ChunkReadError::Fill(value)
+    }
+}
+
 impl Display for ChunkReadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        use ChunkReadError::*;
+
         match self {
-            ChunkReadError::Io(e) => write!(f, "I/O error when reading chunk: {e}"),
-            ChunkReadError::BadLength => write!(f, "bad length field when decoding chunk"),
-            ChunkReadError::BadNbt(e) => write!(f, "chunk had invalid NBT data: {e}"),
-            ChunkReadError::FailedDecompression => write!(f, "couldn't decompress chunk"),
+            Io(e) => e.fmt(f),
+            #[cfg(feature = "buf-fill")]
+            Fill(e) => e.fmt(f),
+            Length => f.write_str("bad length"),
+            Nbt(e) => e.fmt(f),
+            Decompression => f.write_str("decompression failed"),
+            BadHeader => f.write_str("invalid Anvil header"),
+            UnknownCompressionType(x) => write!(f, "unsupported compression type: {x}"),
         }
     }
 }
@@ -147,7 +111,11 @@ impl Error for ChunkReadError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             ChunkReadError::Io(cause) => Some(cause),
-            ChunkReadError::BadNbt(cause) => Some(cause),
+
+            #[cfg(feature = "buf-fill")]
+            ChunkReadError::Fill(cause) => Some(cause),
+
+            ChunkReadError::Nbt(cause) => Some(cause),
             _ => None,
         }
     }

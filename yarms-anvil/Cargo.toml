@@ -4,23 +4,14 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-yarms-chunk-loader = { path = "../yarms-chunk-loader", default-features = false }
-yarms-nbt = { path = "../yarms-nbt", default-features = false }
-yarms-std = { path = "../yarms-std", default-features = false }
-yarms-threadpool = { path = "../yarms-threadpool", default-features = false }
+yarms-chunk-loader = { path = "../yarms-chunk-loader/", default-features = false }
+yarms-std = { path = "../yarms-std", default-features = false, features = [ "buf-fill" ] }
 
-dashmap = { version = "6.1.0", default-features = false, optional = true }
-hashbrown = { version = "0.16.0", default-features = false }
-libdeflater = { version = "1.24.0", default-features = false }
-lru = { version = "0.16.1", default-features = false, features = [ "hashbrown" ] }
-lz4 = { version = "1.28.1", default-features = false, optional = true }
-maybe-owned = { version = "0.3.4", default-features = false }
+bytes = { version = "1.10.0", default-features = false }
 
 [lints]
 workspace = true
 
 [features]
-default = [ "std", "dashmap-header-lookup" ]
-lz4 = [ "dep:lz4", "std" ]
-dashmap-header-lookup = [ "dep:dashmap", "std" ]
-std = [ "yarms-chunk-loader/std", "yarms-nbt/std", "yarms-std/std", "yarms-threadpool/std" ]
+default = [ "std" ]
+std = [ "yarms-chunk-loader/std", "yarms-std/std" ]

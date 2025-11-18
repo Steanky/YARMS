@@ -156,7 +156,7 @@ impl Identifier {
     ///
     /// Check if the given char is valid for inclusion in a value.
     ///
-    /// Valid value chars are limited to `[a-z0-9-_/.]` (ASCII lowercase letters, ASCII digits,
+    /// Valid value chars are limited to `[a-z0-9-_/\.]` (ASCII lowercase letters, ASCII digits,
     /// `-`, `_`, `/`, and `.`). Note that values accept all the same characters that namespaces do,
     /// with the addition of allowing `/` and `.`.
     #[must_use]

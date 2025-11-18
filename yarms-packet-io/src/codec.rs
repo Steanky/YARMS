@@ -1,14 +1,10 @@
 use crate::crypto::DecryptionContext;
-use crate::disjoint::{Disjoint, DisjointMut};
 use crate::{
     MAX_PACKET_LEN, MAX_UNCOMPRESSED_DATA_LEN, MIN_BODY_LEN, MIN_COMPRESSED_DATA_LEN,
     MIN_PACKET_LEN, MIN_UNCOMPRESSED_DATA_LEN,
 };
-use alloc::vec::Vec;
-use bytes::{Buf, BufMut};
-use core::ptr;
+use bytes::Buf;
 use libdeflater::Decompressor;
-use std::io::Read;
 use yarms_protocol::types::{validate_len, VarInt, MAX_VAR_INT_BYTES};
 use yarms_protocol::util::PartialRead;
 use yarms_protocol::{util, validation_error, ProtocolRead};
@@ -38,11 +34,21 @@ where
     state: &'a mut State<Crypt>,
 }
 
+///
+/// Enum representing a packet body.
+///
+/// May be a direct reference to the underlying network buffer, or a mutable reference to an
+/// immutable slice of bytes.
 pub enum Body<'a, 'b, Buffer>
 where
     Buffer: ?Sized,
 {
+    ///
+    /// The body is stored directly in the buffer.
     Buffer(&'a mut Buffer),
+
+    ///
+    /// The body is stored in a slice.
     Slice(&'a mut &'b [u8]),
 }
 
@@ -60,12 +66,13 @@ pub type PacketDecompressor<Buffer, Crypt, Handler> = fn(
 
 impl<'a, 'b, Buffer, Crypt> PacketContext<'a, 'b, Buffer, Crypt>
 where
-    Buffer: Buf + DisjointMut + ?Sized,
+    Buffer: Buf + AsMut<[u8]> + ?Sized,
     Crypt: DecryptionContext,
 {
     ///
     /// The packet's identifier. This may be any valid [`VarInt`], including negative values. It is
     /// up to the packet handler to determine which identifiers are valid and which are invalid.
+    #[inline]
     pub fn packet_id(&self) -> VarInt {
         self.packet_id
     }
@@ -74,18 +81,21 @@ where
     /// The packet's body length. This will always be non-negative, smaller than or equal to
     /// [`MAX_UNCOMPRESSED_DATA_LEN`], and smaller than or equal to the amount of bytes available in
     /// `body`.
+    #[inline]
     pub fn body_len(&self) -> VarInt {
         self.body_len
     }
 
     ///
     /// Test if decompression is enabled.
+    #[inline]
     pub fn is_decompression_enabled(&self) -> bool {
         self.state.decompress
     }
 
     ///
     /// Test if decryption is enabled.
+    #[inline]
     pub fn is_decryption_enabled(&self) -> bool {
         self.state.decryption_context.is_some()
     }
@@ -131,9 +141,9 @@ where
     ///
     /// This may be either a direct reference to the packet byte buffer, or a mutable reference to
     /// an immutable slice, depending on whether the packet needed to be decompressed first.
-    pub fn body<'c, 'z>(&'z mut self) -> Body<'c, 'b, Buffer>
+    pub fn body<'c, 's>(&'s mut self) -> Body<'c, 'b, Buffer>
     where
-        'z: 'c,
+        's: 'c,
         'a: 'c,
     {
         match &mut self.decompressed_body {
@@ -167,6 +177,7 @@ where
     ///
     /// The length of the compressed data. This value is derived from the packet length prefix. It
     /// is always in range `[MIN_COMPRESSED_DATA_LEN, MAX_PACKET_LEN]`.
+    #[inline]
     pub fn compressed_data_len(&self) -> VarInt {
         self.compressed_data_len
     }
@@ -176,6 +187,7 @@ where
     /// `[1, MAX_UNCOMPRESSED_DATA_LEN]`.
     ///
     /// This value is needed to calculate the required size of the decompression buffer.
+    #[inline]
     pub fn uncompressed_data_len(&self) -> VarInt {
         self.uncompressed_data_len
     }
@@ -193,53 +205,20 @@ impl<Crypt> State<Crypt> {
     }
 }
 
-#[cold]
-#[inline(never)]
-fn disjoint_read_prefix<Buffer>(buf: &mut Buffer) -> crate::Result<PartialRead>
-where
-    Buffer: Disjoint + ?Sized,
-{
-    let mut storage = [0_u8; MAX_VAR_INT_BYTES];
-    let mut written = 0_usize;
-
-    for chunk in buf.chunk_iter() {
-        let len = core::cmp::min(MAX_VAR_INT_BYTES - written, chunk.len());
-        storage[written..written + len].copy_from_slice(&chunk[..len]);
-
-        written += len;
-
-        if written < MAX_VAR_INT_BYTES {
-            match util::var_int_partial_read(&storage[..]) {
-                PartialRead::NeedsBytes => continue,
-                done => return Ok(done),
-            }
-        } else {
-            let (bytes, var_int) = util::var_int_read(&storage)?;
-            return Ok(PartialRead::Done(bytes, var_int));
-        }
-    }
-
-    Ok(PartialRead::NeedsBytes)
-}
-
 #[inline]
 fn read_prefix<Buffer>(buf: &mut Buffer) -> crate::Result<PartialRead>
 where
-    Buffer: Buf + Disjoint + ?Sized,
+    Buffer: Buf + AsRef<[u8]> + ?Sized,
 {
-    let chunk = buf.chunk();
+    let chunk = buf.as_ref();
 
     if chunk.len() >= MAX_VAR_INT_BYTES {
         let (var_int_len, var_int) =
             util::var_int_read(&chunk[..MAX_VAR_INT_BYTES].try_into().unwrap())?;
 
         Ok(PartialRead::Done(var_int_len, var_int))
-    } else if Buffer::contiguous() || chunk.len() == buf.remaining() {
-        Ok(util::var_int_partial_read(chunk))
     } else {
-        // branch should be omitted entirely for contiguous buffers!
-        // (and rarely hit for even non-contiguous ones)
-        disjoint_read_prefix(buf)
+        Ok(util::var_int_partial_read(chunk))
     }
 }
 
@@ -272,8 +251,8 @@ pub mod helper {
         PacketDecompressor<Buffer, Crypt, Handler>,
     ) -> crate::Result<()>
            + Send {
-        let mut local_buffer = RefCell::new(Vec::new());
-        let mut local_decompressor = RefCell::new(libdeflater::Decompressor::new());
+        let local_buffer = RefCell::new(Vec::new());
+        let local_decompressor = RefCell::new(libdeflater::Decompressor::new());
 
         move |args, func| {
             let target = *args.uncompressed_data_len() as usize;
@@ -317,44 +296,13 @@ pub mod helper {
     }
 }
 
-fn decrypt_disjoint<Buffer, Crypt>(buf: &mut Buffer, crypt: &mut Crypt, start: usize)
-where
-    Buffer: DisjointMut + ?Sized,
-    Crypt: DecryptionContext,
-{
-    let mut iter = buf.chunk_iter_mut();
-
-    let mut pos = 0_usize;
-    for chunk in &mut iter {
-        let (next, overflow) = pos.overflowing_add(chunk.len());
-
-        if !overflow && next <= start {
-            pos = next;
-        } else {
-            crypt.decrypt_slice(&mut chunk[start - pos..]);
-            break;
-        }
-    }
-
-    // decrypt the rest of the buffer
-    for chunk in iter {
-        crypt.decrypt_slice(chunk);
-    }
-}
-
 #[inline]
 fn decrypt_buffer<Buffer, Crypt>(buf: &mut Buffer, crypt: &mut Crypt, start: usize)
 where
-    Buffer: DisjointMut + ?Sized,
+    Buffer: AsMut<[u8]> + ?Sized,
     Crypt: DecryptionContext,
 {
-    // for contiguous buffers, a single call to `decrypt_slice` suffices
-    if Buffer::contiguous() {
-        let chunk = buf.chunk_iter_mut().next().unwrap();
-        crypt.decrypt_slice(&mut chunk[start..]);
-    } else {
-        decrypt_disjoint(buf, crypt, start)
-    }
+    crypt.decrypt_slice(&mut buf.as_mut()[start..]);
 }
 
 #[inline(never)]
@@ -419,7 +367,7 @@ fn packet_err<T>(string: &'static str) -> crate::Result<T> {
 /// use yarms_packet::Packet;
 /// use yarms_packet_io::codec::{decode_packets, Body, State};
 /// use yarms_packet_io::crypto::AESCFB8DecryptionContext;
-/// use yarms_packet_io::disjoint::SliceBuf;
+/// use yarms_std::disjoint::SliceBuf;
 /// use yarms_protocol::{ProtocolRead, ProtocolWrite};
 /// use yarms_protocol::types::{VarInt, VarLong};
 ///
@@ -485,7 +433,7 @@ fn packet_err<T>(string: &'static str) -> crate::Result<T> {
 /// // count how many packets we get to read from the buffer
 /// let mut packet_count = 0;
 ///
-/// // SliceBuf is needed because it implements both Buf and DisjointMut
+/// // SliceBuf is needed because it implements both Buf and AsMut<[u8]>
 /// // if we tried to just use `vec` here we'd run into problems as it does not implement Buf
 /// let result = decode_packets(&mut SliceBuf(&mut packet_buffer), &mut state, |mut packet_context| {
 ///     let body_len = *packet_context.body_len() as usize;
@@ -526,7 +474,7 @@ pub fn decode_packets<Buffer, Crypt, Handler, Decompress>(
     mut decompress: Decompress,
 ) -> crate::Result<PartialRead>
 where
-    Buffer: Buf + DisjointMut + ?Sized,
+    Buffer: Buf + AsRef<[u8]> + AsMut<[u8]> + ?Sized,
     Crypt: DecryptionContext,
     Handler: FnMut(PacketContext<'_, '_, Buffer, Crypt>) -> crate::Result<()>,
     Decompress: FnMut(
@@ -653,33 +601,19 @@ fn decompress(
     Ok(())
 }
 
-#[cold]
-#[inline(never)]
-fn decompress_disjoint<Buffer>(
-    compressed_len: usize,
-    buf: &mut Buffer,
-    decompressor: &mut Decompressor,
-    buf_out: &mut [u8],
-) -> crate::Result<()>
-where
-    Buffer: Buf + ?Sized,
-{
-    decompress(decompressor, &buf_to_vec(buf, compressed_len)[..], buf_out)
-}
-
 fn decompress_packet<Buffer, Crypt, Handler>(
     args: DecompressionArgs<'_, Buffer, Crypt, Handler>,
     decompressor: &mut Decompressor,
-    mut buf_out: &'_ mut [u8],
+    buf_out: &'_ mut [u8],
 ) -> crate::Result<()>
 where
-    Buffer: Buf + DisjointMut + ?Sized,
+    Buffer: Buf + AsMut<[u8]> + ?Sized,
     Crypt: DecryptionContext,
     Handler: FnMut(PacketContext<'_, '_, Buffer, Crypt>) -> crate::Result<()>,
 {
     let DecompressionArgs {
         compressed_data_len,
-        mut buf,
+        buf,
         state,
         handler,
         ..
@@ -687,19 +621,12 @@ where
 
     // cast should be lossless due to validation done in `decode_packets`
     let compressed_length = *compressed_data_len as usize;
-    let chunk = buf.chunk();
+    let chunk = buf.as_mut();
 
-    // as per the contract of `contiguous`, when true, chunk.len() == chunk.remaining()
-    if Buffer::contiguous() || compressed_length <= chunk.len() {
-        decompress(decompressor, &chunk[..compressed_length], buf_out)?;
+    decompress(decompressor, &chunk[..compressed_length], buf_out)?;
 
-        // advances the buffer to the beginning of the next packet
-        buf.advance(compressed_length);
-    } else {
-        // cold path: usually we have everything in one chunk
-        // no need to advance `buf` after, the function does it for us
-        decompress_disjoint(compressed_length, buf, decompressor, buf_out)?;
-    }
+    // advances the buffer to the beginning of the next packet
+    buf.advance(compressed_length);
 
     let buf_out_ref = &mut &*buf_out;
     let packet_id = VarInt::read_from(buf_out_ref, 0)?;
@@ -713,80 +640,4 @@ where
     })?;
 
     Ok(())
-}
-
-///
-/// Copies `target` bytes from `buf` into a newly-allocated [`Vec`]. Used when it isn't possible to
-/// decompress directly from the network buffer due to e.g. a non-contiguous buffer, and needing
-/// a contiguous slice to decompress from.
-///
-/// This just copies the data in the buffer by repeatedly calling [`Buf::chunk`] and advancing. When
-/// this function returns, `buf` will have advanced by a number of bytes equal to the length of the
-/// returned vector.
-///
-/// Since this re-allocates and copies data, this function should not be used unless necessary. It
-/// is expected to be called infrequently.
-///
-/// It is assumed that `B` is a potentially-non-contiguous buffer.
-///
-/// # Panics
-/// This function panics if `target` is greater than `isize::MAX`, if `target` bytes cannot be
-/// allocated, or if [`Buf::remaining`] is smaller than `target`.
-#[inline]
-fn buf_to_vec<B>(buf: &mut B, target: usize) -> Vec<u8>
-where
-    B: Buf + ?Sized,
-{
-    // target must not exceed isize::MAX because otherwise we would overflow isize in the loop below
-    assert!(
-        target <= (isize::MAX as usize),
-        "`target` was greater than isize::MAX"
-    );
-
-    // N.B: this assertion is a "courtesy" as it fails when the buffer doesn't have enough bytes
-    // however, because `Buf` is safe to implement, we must not rely on its contract for safety!
-    // currently, a `Buf` that reports the wrong value for `remaining` will cause this function
-    // to loop infinitely and never return, but will not lead to UB
-    assert!(
-        target <= buf.remaining(),
-        "`buf` didn't have enough bytes left"
-    );
-
-    let mut vec = Vec::<u8>::with_capacity(target);
-    let mut vec_offset = 0_isize;
-
-    let mut remaining = target;
-    loop {
-        if remaining == 0 {
-            // SAFETY:
-            // - `remaining` is 0, so we wrote exactly `target` bytes
-            unsafe {
-                vec.set_len(target);
-            }
-
-            return vec;
-        }
-
-        let chunk = buf.chunk();
-        let len = core::cmp::min(chunk.len(), remaining);
-
-        // SAFETY:
-        // - `src` and `dst` are both non-null, aligned, and non-overlapping
-        // - T is u8, which is Copy
-        // - we can't write outside the Vec's capacity
-        // - `len` is <= the length of `chunk`
-        unsafe {
-            ptr::copy_nonoverlapping(chunk.as_ptr(), vec.as_mut_ptr().offset(vec_offset), len);
-        }
-
-        buf.advance(len);
-
-        // `remaining` is always less than or equal to isize::MAX, because of the assertion above
-        // cast can't be lossy because len is always smaller than or equal to `remaining`
-        // `vec_offset` can't overflow because we never increase it by more than `target` bytes
-        vec_offset += len as isize;
-
-        // can't underflow due to the `min` call above: `len` <= `remaining`
-        remaining -= len;
-    }
 }

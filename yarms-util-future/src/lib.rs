@@ -335,16 +335,14 @@ impl Signaller {
         {
             // SAFETY:
             // - we successfully switched to WAKER_INIT because the compare-exchange succeeded
-            // - no other thread may acquire access `waker` while we are in WAKER_INIT
-            unsafe {
-                borrow_mut(&self.waker, |waker| {
-                    let waker_mut = &mut *waker;
-                    match waker_mut {
-                        None => *waker_mut = Some(cx.waker().clone()),
-                        Some(waker) => waker.clone_from(cx.waker()),
-                    }
-                });
-            }
+            // - no other thread may acquire access to `waker` while we are in WAKER_INIT
+            borrow_mut(&self.waker, |waker| unsafe {
+                let waker_mut = &mut *waker;
+                match waker_mut {
+                    None => *waker_mut = Some(cx.waker().clone()),
+                    Some(waker) => waker.clone_from(cx.waker()),
+                }
+            });
 
             // ensure visibility of our updated waker by using Release ordering
             self.state.store(WAKER_FREE, switch::Ordering::Release);

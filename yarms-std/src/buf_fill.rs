@@ -2,7 +2,6 @@ use alloc::vec::Vec;
 use bytes::BufMut;
 use core::future::Future;
 use core::num::NonZeroUsize;
-use yarms_protocol::ErrorReason;
 
 ///
 /// Type alias for `core::result::Result<usize, FillError>`.
@@ -49,17 +48,6 @@ impl From<FillError> for std::io::Error {
                 std::io::Error::new(std::io::ErrorKind::Other, NOT_ENOUGH_BYTES_ERR_MSG)
             }
             FillError::Io(inner) => inner,
-        }
-    }
-}
-
-impl From<FillError> for yarms_protocol::ReadError {
-    fn from(error: FillError) -> Self {
-        match error {
-            FillError::NotEnoughBytes => {
-                yarms_protocol::ReadError::new(ErrorReason::NotEnoughBytes)
-            }
-            FillError::Io(io) => yarms_protocol::ReadError::new(ErrorReason::Io(io)),
         }
     }
 }
@@ -151,7 +139,19 @@ pub trait BufFill {
         B: BufMut + ?Sized;
 }
 
+///
+/// A [`BufFill`] that additionally supports asynchronous seeking.
+pub trait BufSeek: BufFill {
+    ///
+    /// Seek to the provided position in the stream. Returns the actual position that was reached.
+    ///
+    /// This will cause subsequent calls to [`BufFill::fill_buf`] to start reading from the
+    /// position that was seeked to, if successful.
+    fn seek(&mut self, seek: crate::io::SeekFrom) -> impl Future<Output = crate::io::Result<u64>>;
+}
+
 impl BufFill for &[u8] {
+    #[inline]
     async fn fill_buf<B>(&mut self, buf: &mut B, target: Option<NonZeroUsize>) -> FillResult
     where
         B: BufMut + ?Sized,
@@ -170,6 +170,7 @@ impl BufFill for &[u8] {
 }
 
 impl BufFill for Vec<u8> {
+    #[inline]
     async fn fill_buf<B>(&mut self, buf: &mut B, target: Option<NonZeroUsize>) -> FillResult
     where
         B: BufMut + ?Sized,
@@ -186,6 +187,40 @@ impl BufFill for Vec<u8> {
     }
 }
 
+#[cfg(feature = "std")]
+impl<T> BufFill for std::io::Cursor<T>
+where
+    T: AsRef<[u8]>,
+{
+    async fn fill_buf<B>(&mut self, buf: &mut B, target: Option<NonZeroUsize>) -> FillResult
+    where
+        B: BufMut + ?Sized,
+    {
+        let current_pos = usize::try_from(self.position()).unwrap_or(usize::MAX);
+        let slice = self.get_ref().as_ref().get(current_pos..).unwrap_or(&[]);
+
+        let len = core::cmp::min(slice.len(), buf.remaining_mut());
+        if len < usize::from(target.unwrap_or(NonZeroUsize::MIN)) {
+            return Err(FillError::NotEnoughBytes);
+        }
+
+        buf.put_slice(&slice[..len]);
+        self.set_position(u64::try_from(current_pos.saturating_add(len)).unwrap_or(u64::MAX));
+        Ok(len)
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> BufSeek for std::io::Cursor<T>
+where
+    T: AsRef<[u8]>,
+{
+    #[inline]
+    async fn seek(&mut self, seek: crate::io::SeekFrom) -> crate::io::Result<u64> {
+        Ok(std::io::Seek::seek(self, seek.into())?)
+    }
+}
+
 #[cfg(feature = "tokio")]
 ///
 /// Adapter implementing [`BufFill`] on [`tokio::io::AsyncRead`]. Needs to have the `tokio` feature
@@ -194,7 +229,7 @@ impl BufFill for Vec<u8> {
 /// # Usage
 /// ```
 /// use tokio::io;
-/// use yarms_packet_io::buf_fill::{AsyncReadAdapter, BufFill};
+/// use yarms_std::buf_fill::{AsyncReadAdapter, BufFill};
 ///
 /// let async_read = io::empty();
 /// let mut adapter = AsyncReadAdapter(async_read);
@@ -210,7 +245,7 @@ pub struct AsyncReadAdapter<R>(pub R);
 #[cfg(feature = "tokio")]
 impl<R> BufFill for AsyncReadAdapter<R>
 where
-    R: tokio::io::AsyncRead,
+    R: tokio::io::AsyncRead + Unpin,
 {
     async fn fill_buf<B>(&mut self, buf: &mut B, target: Option<NonZeroUsize>) -> FillResult
     where
@@ -221,6 +256,7 @@ where
 
         loop {
             let read = tokio::io::AsyncReadExt::read_buf(&mut self.0, buf).await?;
+
             if read == 0 {
                 return Err(FillError::NotEnoughBytes);
             }
@@ -237,6 +273,17 @@ where
     }
 }
 
+#[cfg(feature = "tokio")]
+impl<R> BufSeek for AsyncReadAdapter<R>
+where
+    R: tokio::io::AsyncRead + tokio::io::AsyncSeek + Unpin,
+{
+    #[inline]
+    async fn seek(&mut self, seek: crate::io::SeekFrom) -> crate::io::Result<u64> {
+        Ok(tokio::io::AsyncSeekExt::seek(&mut self.0, seek.into()).await?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::buf_fill::BufFill;
@@ -245,8 +292,8 @@ mod tests {
 
     #[test]
     fn simple_fill() {
-        let mut storage = [0_u8, 1, 2, 3, 42];
-        let mut fill = &mut &storage[..];
+        let storage = [0_u8, 1, 2, 3, 42];
+        let fill = &mut &storage[..];
 
         let mut buf_mut = Vec::new();
         let result =

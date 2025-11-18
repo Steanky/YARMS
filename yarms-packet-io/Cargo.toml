@@ -7,20 +7,21 @@ description = "Utilities for reading and writing packets to and from generic sou
 [dependencies]
 yarms-packet = { path = "../yarms-packet", default-features = false }
 yarms-protocol = { path = "../yarms-protocol", default-features = false, features = [ "libdeflater" ] }
+yarms-std = { path = "../yarms-std", default-features = false, features = [ "buf-fill", "disjoint" ] }
 
 aes = { version = "0.8.4", default-features = false }
 bytes = { version = "1.10.0", default-features = false }
 cfb8 = { version = "0.8.1", default-features = false }
 libdeflater = { version = "1.23.0", default-features = false }
-tokio = { version = "1.43.0", features = [ "io-util" ], optional = true }
+tokio = { version = "1.43.0", default-features = false, features = [ "io-util" ], optional = true }
 
 [dev-dependencies]
 yarms-util-future = { path = "../yarms-util-future", features = [ "std" ] }
 
 [features]
 default = [ "std" ]
-std = [ "yarms-protocol/std" ]
-tokio = [ "dep:tokio", "std" ]
+std = [ "yarms-protocol/std", "yarms-std/std" ]
+tokio = [ "dep:tokio", "std", "yarms-std/tokio" ]
 
 [lints]
 workspace = true

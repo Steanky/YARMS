@@ -11,5 +11,6 @@ yarms-std = { path = "../yarms-std", default-features = false }
 workspace = true
 
 [features]
-default = [ "std" ]
+default = [ "std", "buf-fill" ]
+buf-fill = [ "yarms-std/buf-fill" ]
 std = [ "yarms-nbt/std", "yarms-std/std" ]
