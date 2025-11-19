@@ -44,12 +44,12 @@ pub enum ChunkReadError {
     /// The length of some piece of data was not as expected.
     Length,
 
-    BadHeader,
-
     ///
     /// Chunk NBT data was invalid.
     Nbt(NbtDeserializeError),
 
+    ///
+    /// The compression type is unknown.
     UnknownCompressionType(u8),
 
     ///
@@ -101,7 +101,6 @@ impl Display for ChunkReadError {
             Length => f.write_str("bad length"),
             Nbt(e) => e.fmt(f),
             Decompression => f.write_str("decompression failed"),
-            BadHeader => f.write_str("invalid Anvil header"),
             UnknownCompressionType(x) => write!(f, "unsupported compression type: {x}"),
         }
     }

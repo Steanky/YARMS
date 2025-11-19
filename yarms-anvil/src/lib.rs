@@ -2,9 +2,10 @@
 //! WIP: Crate documentation
 //!
 
+#![no_std]
+
 use bytes::BufMut;
-use core::num::{NonZeroU32, NonZeroUsize};
-use std::num::NonZeroU64;
+use core::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use yarms_chunk_loader::{ChunkReadError, ChunkReadResult};
 use yarms_std::{buf_fill::BufSeek, io::SeekFrom};
 
@@ -154,8 +155,7 @@ impl ChunkPointer {
         #[cfg(debug_assertions)]
         {
             Some(Self {
-                repr: NonZeroU32::new(repr)
-                    .expect(format!("repr (from {bytes:?}) should be non-zero").as_str()),
+                repr: NonZeroU32::new(repr).expect("repr should be non-zero"),
             })
         }
 
@@ -177,7 +177,7 @@ impl ChunkPointer {
         // to catch UB in tests. this is NOT relied upon for safety in release builds!
         debug_assert!(
             (1..=0xFF_FF_FF_u64).contains(&sectors),
-            "sectors out of range 0x1..=0xFFFFFF"
+            "sectors out of range 0x01..=0xFFFFFF"
         );
 
         let result = sectors * u64::from(SECTOR_BYTES);
@@ -198,7 +198,7 @@ impl ChunkPointer {
         // to catch UB in tests. this is NOT relied upon for safety in release builds!
         debug_assert!(
             (1..=u32::from(u8::MAX)).contains(&sectors),
-            "sectors out of range 0x1..=0xFF: {sectors}"
+            "sectors out of range 0x01..=0xFF: {sectors}"
         );
 
         // SAFETY:
@@ -226,9 +226,7 @@ pub fn region_coordinate(world_c: i32) -> i32 {
 
 ///
 /// Converts a world chunk coordinate into the region relative coordinate of the region it belongs
-/// to. The returned value will be in range (0..32). This is what should be passed to a method
-/// like [`AnvilHeader::pointer_at`]. This does not return the coordinate of the 32x32 region that
-/// the coordinate is located within. For that, use [`region_coordinate`].
+/// to. The returned value will be in range (0..32).
 #[inline]
 pub fn region_relative_coordinate(world_c: i32) -> i32 {
     return world_c & 31;
@@ -238,6 +236,23 @@ pub fn region_relative_coordinate(world_c: i32) -> i32 {
 /// Number of entries in in an Anvil header. This corresponds to a single entry for each chunk in a
 /// 32x32 region.
 pub const HEADER_ENTRIES: usize = 1024;
+
+///
+/// Newtype wrapper representing an Anvil header.
+pub struct AnvilHeader<'a>(pub &'a mut [Option<ChunkPointer>; HEADER_ENTRIES]);
+
+impl AnvilHeader<'_> {
+    #[inline]
+    pub fn pointer_at(
+        &self,
+        region_relative_x: i32,
+        region_relative_z: i32,
+    ) -> Option<ChunkPointer> {
+        (&*self.0)
+            .get((region_relative_x | (region_relative_z << 5)) as usize)
+            .and_then(|x| *x)
+    }
+}
 
 pub async fn load_header(
     fill: &mut impl BufSeek,
@@ -261,20 +276,20 @@ pub async fn load_header(
             // this usage of chunks_exact_mut seems to reliably lower to SIMD instructions
             for chunk in self.0.chunks_exact_mut(CHUNK_POINTER_SIZE) {
                 #[cfg(target_endian = "little")]
-                // Anvil header information is in big-endian by definition, so for little-endian platforms
-                // we must reverse the byte order.
+                // Anvil header information is in big-endian by definition, so for little-endian
+                // platforms we must reverse the byte order.
                 chunk.reverse();
 
-                // we perform a native endian transform because we already reverse the bytes manually
-                // above; which must be done regardless in order for the resulting ChunkPointers to be
-                // meaningful.
+                // we perform a native endian transform because we already reverse the bytes
+                // manually above; which must be done regardless in order for the resulting
+                // ChunkPointers to be meaningful.
                 let repr = u32::from_ne_bytes(chunk.try_into().unwrap());
 
                 // ensure the ChunkPointer invariant is upheld
-                // note that calling any of the SAFE methods of the ChunkPointers BEFORE this validation
-                // step could result in UB if the validation would have failed (in other words, there is
-                // transient unsoundness, but this is not actually a problem because it is never exposed
-                // to the end user).
+                // note that calling any of the SAFE methods of the ChunkPointers BEFORE this
+                // validation step could result in UB if the validation would have failed (in other
+                // words, there is transient unsoundness, but this is not actually a problem because
+                // it is never exposed to the end user).
                 if repr != 0 && !valid_repr(repr) {
                     chunk.fill(0);
                 }
@@ -297,7 +312,7 @@ pub async fn load_header(
     // if this is dropped before having fully run through all of the chunks, this will clear the
     // entire byte array to avoid exposing ChunkPointer instances with an invalid internal state
     // that could lead to unsoundness.
-    let mut clean = CleanOnDrop(as_u8);
+    let clean = CleanOnDrop(as_u8);
 
     fill.fill_buf(&mut &mut clean.0[..], Some(BYTES)).await?;
 
@@ -335,6 +350,7 @@ pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>>(
     fill.fill_buf(buf, Some(length)).await?;
 
     let buf = (&*buf).as_ref();
+
     debug_assert!(buf.len() >= usize::from(SECTOR_BYTES));
 
     // buf is at least SECTOR_BYTES long, so this shouldn't panic
