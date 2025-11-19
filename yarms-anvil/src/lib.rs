@@ -1,6 +1,5 @@
 //!
-//! WIP: Crate documentation
-//!
+//! Basic support for the Anvil protocol. This crate is both no-std and no-alloc.
 
 #![no_std]
 
@@ -15,9 +14,6 @@ use yarms_std::{buf_fill::BufSeek, io::SeekFrom};
 // larger than u16::MAX.
 compile_error!("This crate does not support 16-bit pointers!");
 
-#[cfg(feature = "std")]
-pub(crate) extern crate std;
-
 ///
 /// Maximum length of a chunk, as it appears before decompression.
 /// Decompressed chunks may theoretically exceed this maximum size.
@@ -27,10 +23,24 @@ pub const MAX_CHUNK_BYTES: usize = (u8::MAX as usize) * (SECTOR_BYTES as usize);
 /// Size, in bytes, of a single chunk "sector": `4096`.
 pub const SECTOR_BYTES: u16 = 4096;
 
+///
+/// Compression type identifier for GZIP.
 pub const GZIP_COMPRESSION: u8 = 1;
+
+///
+/// Compression type identifier for ZLIB.
 pub const ZLIB_COMPRESSION: u8 = 2;
+
+///
+/// Compression type identifier for no compression.
 pub const NO_COMPRESSION: u8 = 3;
+
+///
+/// Compression type identifier for LZ4.
 pub const LZ4_COMPRESSION: u8 = 4;
+
+///
+/// Compression type identifier for custom compression.
 pub const CUSTOM_COMPRESSION: u8 = 127;
 
 ///
@@ -86,6 +96,8 @@ pub struct ChunkMeta<'b> {
 }
 
 impl<'b> ChunkMeta<'b> {
+    ///
+    /// Creates a new [`ChunkMeta`].
     #[inline]
     pub fn new(length: i32, compression_type: Compression) -> Option<ChunkMeta> {
         if length <= 0 {
@@ -113,6 +125,8 @@ impl<'b> ChunkMeta<'b> {
         }
     }
 
+    ///
+    /// The exact length of the chunk data.
     #[inline]
     pub fn len(&self) -> NonZeroUsize {
         // SAFETY:
@@ -121,11 +135,16 @@ impl<'b> ChunkMeta<'b> {
         unsafe { NonZeroUsize::try_from(self.length).unwrap_unchecked() }
     }
 
+    ///
+    /// The compression type used by the chunk data.
     #[inline]
     pub fn compression_type(&self) -> Compression<'b> {
         self.compression_type
     }
 
+    ///
+    /// Where the chunk data starts, relative to the beginning of a buffer filled by a call to
+    /// [`prepare_buffer`].
     #[inline]
     pub fn chunk_data_start(&self) -> usize {
         match self.compression_type {
@@ -144,6 +163,11 @@ fn valid_repr(repr: u32) -> bool {
 }
 
 impl ChunkPointer {
+    ///
+    /// Try to construct a [`ChunkPointer`] from 4 _big-endian_ bytes.
+    ///
+    /// Returns `None` if the _most significant_ 8 bits are zero, or the least significant 24 bits
+    /// are zero, or all bits are zero.
     pub fn try_from_bytes(bytes: [u8; 4]) -> Option<Self> {
         let repr = u32::from_be_bytes(bytes);
 
@@ -170,6 +194,9 @@ impl ChunkPointer {
         }
     }
 
+    ///
+    /// Defines where the chunk data is, relative to the start of the Anvil region. Similarly to
+    /// [`ChunkPointer::length_bytes`], this is always a multiple of `SECTOR_BYTES` (4096).
     #[inline]
     pub fn offset_bytes(self) -> NonZeroU64 {
         let sectors = u64::from(self.repr.get() & OFFSET_MASK);
@@ -190,6 +217,9 @@ impl ChunkPointer {
         unsafe { NonZeroU64::new_unchecked(result) }
     }
 
+    ///
+    /// Gets the imprecise length of the chunk. This is strictly larger than or equal to the actual
+    /// size of the chunk. It is always a multiple of `SECTOR_BYTES` (4096).
     #[inline]
     pub fn length_bytes(self) -> NonZeroUsize {
         // get the 8 most significant bits
@@ -242,6 +272,11 @@ pub const HEADER_ENTRIES: usize = 1024;
 pub struct AnvilHeader<'a>(pub &'a mut [Option<ChunkPointer>; HEADER_ENTRIES]);
 
 impl AnvilHeader<'_> {
+    ///
+    /// Looks up a [`ChunkPointer`] in this header.
+    ///
+    /// Both `region_relative_x` and `region_relative_z` should be in range `0..32`. If this is not
+    /// the case, this function will not panic, but the value it actually returns is not specified.
     #[inline]
     pub fn pointer_at(
         &self,
@@ -254,6 +289,19 @@ impl AnvilHeader<'_> {
     }
 }
 
+///
+/// Loads an Anvil header from `fill` into `storage`.
+///
+/// Returns `Ok` if data was correctly loaded. Returns `Err` if there is a problem, which can occur
+/// when there is an IO error while trying to read bytes from `fill`.
+///
+/// This function will read exactly 4096 bytes from the _beginning_ of `fill`.
+///
+/// # Panics
+/// This function will not panic (modulo library bugs) unless some implementation of `fill` panics.
+/// In this instance, the contents of `storage` are _unspecified_: they may be left unmodified,
+/// reset to `None`, partially modified, or anything else that doesn't result in UB or soundness
+/// issues for the caller.
 pub async fn load_header(
     fill: &mut impl BufSeek,
     storage: &mut [Option<ChunkPointer>; HEADER_ENTRIES],
@@ -313,7 +361,6 @@ pub async fn load_header(
     // entire byte array to avoid exposing ChunkPointer instances with an invalid internal state
     // that could lead to unsoundness.
     let clean = CleanOnDrop(as_u8);
-
     fill.fill_buf(&mut &mut clean.0[..], Some(BYTES)).await?;
 
     Ok(())
@@ -341,8 +388,8 @@ pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>>(
     // The smallest chunk, plus 1 byte for the compression type.
     const MIN_LEN_PREFIX: i32 = MIN_CHUNK_DATA_LEN + 1;
 
-    let expected_offset = pointer.offset_bytes().get();
-    fill.seek(SeekFrom::Start(expected_offset)).await?;
+    fill.seek(SeekFrom::Start(pointer.offset_bytes().get()))
+        .await?;
 
     // smallest value for length is SECTOR_BYTES
     let length = pointer.length_bytes();
