@@ -1,5 +1,7 @@
 //!
-//! Basic support for the Anvil protocol. This crate is both no-std and no-alloc.
+//! Basic support for the Anvil protocol.
+//!
+//! This crate is inherently `no-std` compatible and doesn't perform any allocation.
 
 #![no_std]
 
