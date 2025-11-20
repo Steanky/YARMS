@@ -44,9 +44,7 @@ impl From<std::io::Error> for FillError {
 impl From<FillError> for std::io::Error {
     fn from(value: FillError) -> Self {
         match value {
-            FillError::NotEnoughBytes => {
-                std::io::Error::new(std::io::ErrorKind::Other, NOT_ENOUGH_BYTES_ERR_MSG)
-            }
+            FillError::NotEnoughBytes => std::io::Error::other(NOT_ENOUGH_BYTES_ERR_MSG),
             FillError::Io(inner) => inner,
         }
     }

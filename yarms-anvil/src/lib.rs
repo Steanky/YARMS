@@ -1,7 +1,11 @@
 //!
 //! Basic support for the Anvil protocol.
 //!
-//! This crate is inherently `no-std` compatible and doesn't perform any allocation.
+//! This crate is always `no-std` compatible and doesn't perform any allocation.
+//!
+//! # Features
+//! * `std` (default): enables conversion between error types for dependent crates. Currently doesn't
+//!   modify any of this crate's own code.
 
 #![no_std]
 
@@ -49,7 +53,7 @@ pub const CUSTOM_COMPRESSION: u8 = 127;
 /// Describes how chunk data is compressed (or if it is even compressed at all).
 ///
 /// This enum can also represent "custom" compression types using the Custom variant.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Compression<'b> {
     ///
@@ -80,7 +84,7 @@ pub enum Compression<'b> {
 /// to load chunk data using the [`prepare_buffer`] function.
 ///
 /// This is derived from an Anvil header.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct ChunkPointer {
     // NonZeroU32 to enable useful layout optimizations as well as efficient loading of
@@ -91,7 +95,7 @@ pub struct ChunkPointer {
 ///
 /// Contains information about a chunk before it has been decoded. This includes the compression
 /// type used as well as the length of the (compressed) data.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ChunkMeta<'b> {
     length: NonZeroU32,
     compression_type: Compression<'b>,
@@ -101,6 +105,7 @@ impl<'b> ChunkMeta<'b> {
     ///
     /// Creates a new [`ChunkMeta`].
     #[inline]
+    #[must_use]
     pub fn new(length: i32, compression_type: Compression) -> Option<ChunkMeta> {
         if length <= 0 {
             return None;
@@ -130,6 +135,7 @@ impl<'b> ChunkMeta<'b> {
     ///
     /// The exact length of the chunk data.
     #[inline]
+    #[must_use]
     pub fn len(&self) -> NonZeroUsize {
         // SAFETY:
         // - the invariant that length is losslessly convertible to `usize` is established by the
@@ -140,6 +146,7 @@ impl<'b> ChunkMeta<'b> {
     ///
     /// The compression type used by the chunk data.
     #[inline]
+    #[must_use]
     pub fn compression_type(&self) -> Compression<'b> {
         self.compression_type
     }
@@ -148,6 +155,7 @@ impl<'b> ChunkMeta<'b> {
     /// Where the chunk data starts, relative to the beginning of a buffer filled by a call to
     /// [`prepare_buffer`].
     #[inline]
+    #[must_use]
     pub fn chunk_data_start(&self) -> usize {
         match self.compression_type {
             Compression::Custom(string) => 7 + string.len(),
@@ -159,9 +167,9 @@ impl<'b> ChunkMeta<'b> {
 const OFFSET_MASK: u32 = 0x00_FF_FF_FF_u32;
 const LENGTH_MASK: u32 = 0xFF_00_00_00_u32;
 
-#[inline(always)]
+#[inline]
 fn valid_repr(repr: u32) -> bool {
-    return repr & OFFSET_MASK != 0 && repr & LENGTH_MASK != 0;
+    repr & OFFSET_MASK != 0 && repr & LENGTH_MASK != 0
 }
 
 impl ChunkPointer {
@@ -170,6 +178,11 @@ impl ChunkPointer {
     ///
     /// Returns `None` if the _most significant_ 8 bits are zero, or the least significant 24 bits
     /// are zero, or all bits are zero.
+    #[allow(
+        clippy::missing_panics_doc,
+        reason = "this function shouldn't actually panic"
+    )]
+    #[must_use]
     pub fn try_from_bytes(bytes: [u8; 4]) -> Option<Self> {
         let repr = u32::from_be_bytes(bytes);
 
@@ -200,6 +213,7 @@ impl ChunkPointer {
     /// Defines where the chunk data is, relative to the start of the Anvil region. Similarly to
     /// [`ChunkPointer::length_bytes`], this is always a multiple of `SECTOR_BYTES` (4096).
     #[inline]
+    #[must_use]
     pub fn offset_bytes(self) -> NonZeroU64 {
         let sectors = u64::from(self.repr.get() & OFFSET_MASK);
 
@@ -223,6 +237,7 @@ impl ChunkPointer {
     /// Gets the imprecise length of the chunk. This is strictly larger than or equal to the actual
     /// size of the chunk. It is always a multiple of `SECTOR_BYTES` (4096).
     #[inline]
+    #[must_use]
     pub fn length_bytes(self) -> NonZeroUsize {
         // get the 8 most significant bits
         let sectors: u32 = (self.repr.get() & LENGTH_MASK) >> (u32::BITS - 8);
@@ -252,16 +267,18 @@ impl ChunkPointer {
 /// Converts a "world chunk coordinate" into a region coordinate. This is the _coordinate of a
 /// region_, NOT a chunk _within_ the region. For that, use [`region_relative_coordinate`].
 #[inline]
+#[must_use]
 pub fn region_coordinate(world_c: i32) -> i32 {
-    return world_c >> 5;
+    world_c >> 5
 }
 
 ///
 /// Converts a world chunk coordinate into the region relative coordinate of the region it belongs
 /// to. The returned value will be in range (0..32).
 #[inline]
+#[must_use]
 pub fn region_relative_coordinate(world_c: i32) -> i32 {
-    return world_c & 31;
+    world_c & 31
 }
 
 ///
@@ -280,12 +297,17 @@ impl AnvilHeader<'_> {
     /// Both `region_relative_x` and `region_relative_z` should be in range `0..32`. If this is not
     /// the case, this function will not panic, but the value it actually returns is not specified.
     #[inline]
+    #[must_use]
     pub fn pointer_at(
         &self,
         region_relative_x: i32,
         region_relative_z: i32,
     ) -> Option<ChunkPointer> {
-        (&*self.0)
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "this method is allowed to return anything when given numbers outside 0..32"
+        )]
+        self.0
             .get((region_relative_x | (region_relative_z << 5)) as usize)
             .and_then(|x| *x)
     }
@@ -294,30 +316,33 @@ impl AnvilHeader<'_> {
 ///
 /// Loads an Anvil header from `fill` into `storage`.
 ///
-/// Returns `Ok` if data was correctly loaded. Returns `Err` if there is a problem, which can occur
-/// when there is an IO error while trying to read bytes from `fill`.
-///
+/// Returns `Ok` if data was correctly loaded.
 /// This function will read exactly 4096 bytes from the _beginning_ of `fill`.
+///
+/// # Errors
+/// Returns `Err` if there is a problem, which can occur when there is an IO error while trying to
+/// read bytes from `fill`.
 ///
 /// # Panics
 /// This function will not panic (modulo library bugs) unless some implementation of `fill` panics.
 /// In this instance, the contents of `storage` are _unspecified_: they may be left unmodified,
 /// reset to `None`, partially modified, or anything else that doesn't result in UB or soundness
 /// issues for the caller.
-pub async fn load_header(
-    fill: &mut impl BufSeek,
+pub async fn load_header<F: BufSeek + ?Sized>(
+    fill: &mut F,
     storage: &mut [Option<ChunkPointer>; HEADER_ENTRIES],
 ) -> ChunkReadResult<()> {
     // should always be 4, because of null pointer optimization
     static CHUNK_POINTER_SIZE: usize = core::mem::size_of::<Option<ChunkPointer>>();
-
-    // SAFETY:
-    // - 1024 * 4 != 0
-    static BYTES: NonZeroUsize =
-        unsafe { NonZeroUsize::new_unchecked(HEADER_ENTRIES * CHUNK_POINTER_SIZE) };
+    static BYTES: NonZeroUsize = NonZeroUsize::new(HEADER_ENTRIES * CHUNK_POINTER_SIZE).unwrap();
 
     // sanity check, Option<ChunkPointer> should always be 4 bytes
-    static __: () = const { assert!(CHUNK_POINTER_SIZE == 4) };
+    static __: () = const {
+        assert!(
+            CHUNK_POINTER_SIZE == 4,
+            "unexpected mem::size_of::<Option<ChunkPointer>>()"
+        );
+    };
 
     struct CleanOnDrop<'a>(&'a mut [u8]);
 
@@ -363,7 +388,7 @@ pub async fn load_header(
     // entire byte array to avoid exposing ChunkPointer instances with an invalid internal state
     // that could lead to unsoundness.
     let clean = CleanOnDrop(as_u8);
-    fill.fill_buf(&mut &mut clean.0[..], Some(BYTES)).await?;
+    fill.fill_buf(&mut &mut *clean.0, Some(BYTES)).await?;
 
     Ok(())
 }
@@ -375,10 +400,17 @@ pub async fn load_header(
 ///
 /// This function will not allocate any new memory, with the exception of any allocation performed
 /// by `buf` during filling.
-pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>>(
+///
+/// # Errors
+/// This function returns `Err` if there is an IO error loading chunk data from `fill`.
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "this function shouldn't actually panic"
+)]
+pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>, F: BufSeek>(
     pointer: ChunkPointer,
     buf: &'b mut B,
-    fill: &mut impl BufSeek,
+    fill: &mut F,
 ) -> ChunkReadResult<ChunkMeta<'b>> {
     //
     // The smallest chunk we care to consider is 4 bytes
@@ -398,13 +430,20 @@ pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>>(
 
     fill.fill_buf(buf, Some(length)).await?;
 
-    let buf = (&*buf).as_ref();
+    let buf = (*buf).as_ref();
 
-    debug_assert!(buf.len() >= usize::from(SECTOR_BYTES));
+    debug_assert!(
+        buf.len() >= usize::from(SECTOR_BYTES),
+        "buf.len() was less than SECTOR_BYTES"
+    );
 
     // buf is at least SECTOR_BYTES long, so this shouldn't panic
     let mut actual_length = i32::from_be_bytes(buf[..4].try_into().unwrap());
 
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "we check actual_length is non-negative"
+    )]
     if actual_length < MIN_LEN_PREFIX || (actual_length as usize) > length.get() - 4 {
         return Err(ChunkReadError::Length);
     }
@@ -417,6 +456,10 @@ pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>>(
         CUSTOM_COMPRESSION => {
             let str_len = u16::from_be_bytes(buf[5..7].try_into().unwrap());
 
+            #[allow(
+                clippy::cast_sign_loss,
+                reason = "we checked actual_length is non-negative"
+            )]
             if (3 + usize::from(str_len) + (MIN_CHUNK_DATA_LEN as usize)) > (actual_length as usize)
             {
                 return Err(ChunkReadError::Length);
@@ -441,7 +484,10 @@ pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>>(
     // prefix bytes that we just interpreted
     actual_length -= 1;
 
-    debug_assert!(actual_length >= MIN_CHUNK_DATA_LEN);
+    debug_assert!(
+        actual_length >= MIN_CHUNK_DATA_LEN,
+        "actual_length was less than MIN_CHUNK_DATA_LEN"
+    );
 
     // SAFETY:
     // - actual_length is nonzero and non-negative

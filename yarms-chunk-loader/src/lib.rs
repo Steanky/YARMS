@@ -7,7 +7,7 @@
 //! # Features
 //! * `std` (default): Enables conversion between `std::io::Error` and [`ChunkReadError`].
 //! * `buf-fill` (default): Enables conversion between [`yarms_std::buf_fill::FillError`] and
-//! [`ChunkReadError`].
+//!   [`ChunkReadError`].
 
 #![no_std]
 
@@ -79,7 +79,7 @@ impl From<std::io::Error> for ChunkReadError {
 #[cfg(feature = "std")]
 impl From<ChunkReadError> for std::io::Error {
     fn from(value: ChunkReadError) -> Self {
-        std::io::Error::new(std::io::ErrorKind::Other, value)
+        std::io::Error::other(value)
     }
 }
 

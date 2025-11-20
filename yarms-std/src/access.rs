@@ -131,7 +131,7 @@ where
 
 impl<T> Accessor for alloc::borrow::Cow<'_, T>
 where
-    T: Accessor + Clone + ?Sized,
+    T: Accessor + alloc::borrow::ToOwned + ?Sized,
 {
     type Target = <T as Accessor>::Target;
 
