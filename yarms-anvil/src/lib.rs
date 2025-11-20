@@ -290,6 +290,7 @@ pub const HEADER_ENTRIES: usize = 1024;
 
 ///
 /// Newtype wrapper representing an Anvil header.
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct AnvilHeader<'a>(pub &'a mut [Option<ChunkPointer>; HEADER_ENTRIES]);
 
 impl AnvilHeader<'_> {
@@ -407,6 +408,16 @@ pub fn region_file_name_owned(region_x: i32, region_z: i32) -> alloc::string::St
 ///
 /// If the `alloc` feature is enabled, users may also call [`region_file_name_owned`] to construct
 /// an owned string.
+///
+/// # Example
+/// ```
+/// // this size array will work for ALL possible file names!
+/// // note that this example only needs 12
+/// let mut storage = [0_u8; yarms_anvil::LARGEST_REGION_FILE_NAME];
+/// let name = yarms_anvil::region_file_name_borrowed(42, -42, &mut storage).expect("should be a valid name");
+///
+/// assert_eq!("r.42.-42.mca", name);
+/// ```
 #[allow(
     clippy::missing_panics_doc,
     reason = "only reason this would panic is a library bug"
@@ -637,12 +648,13 @@ pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>, F: BufSeek>(
 #[cfg(test)]
 mod tests {
     extern crate alloc;
+    extern crate std;
 
     use alloc::string::String;
     use alloc::string::ToString;
-    use bytes::BytesMut;
 
     use crate::region_file_name_borrowed;
+    use crate::LARGEST_REGION_FILE_NAME;
 
     fn check_name(expected: &mut String, storage: &mut [u8], x: i32, z: i32) {
         expected.clear();
@@ -658,14 +670,8 @@ mod tests {
     }
 
     #[test]
-    fn basic_load() {
-        let mut read_buf = BytesMut::new();
-        let mut decompress_buf = BytesMut::new();
-    }
-
-    #[test]
     fn small_region_names() {
-        let mut storage = [0u8; 32];
+        let mut storage = [0u8; LARGEST_REGION_FILE_NAME];
         let mut expected = String::new();
 
         for x in i32::MIN..=(i32::MIN + 1000) {
@@ -677,7 +683,7 @@ mod tests {
 
     #[test]
     fn around_zero_region_names() {
-        let mut storage = [0u8; 32];
+        let mut storage = [0u8; LARGEST_REGION_FILE_NAME];
         let mut expected = String::new();
 
         for x in -1000_i32..=1000 {
@@ -689,7 +695,7 @@ mod tests {
 
     #[test]
     fn large_region_names() {
-        let mut storage = [0u8; 32];
+        let mut storage = [0u8; LARGEST_REGION_FILE_NAME];
         let mut expected = String::new();
 
         for x in (i32::MAX - 1000)..=i32::MAX {

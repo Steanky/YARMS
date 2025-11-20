@@ -12,10 +12,12 @@ bytes = { version = "1.10.0", default-features = false }
 [dev-dependencies]
 flate2 = "1.1.5"
 yarms-nbt = { path = "../yarms-nbt" }
+yarms-util-future = { path = "../yarms-util-future" }
 
 [lints]
 workspace = true
 
 [features]
-default = [ "alloc" ]
+default = [ "std" ]
 alloc = []
+std = [ "alloc", "yarms-chunk-loader/std", "yarms-std/std" ]
