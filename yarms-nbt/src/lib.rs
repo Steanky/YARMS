@@ -23,7 +23,7 @@ pub mod mutf;
 /// Declarative macros for improving the API ergonomics.
 pub mod macros;
 
-pub extern crate alloc;
+pub(crate) extern crate alloc;
 
 #[cfg(feature = "std")]
 pub(crate) extern crate std;

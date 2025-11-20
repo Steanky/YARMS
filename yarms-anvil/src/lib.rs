@@ -1,11 +1,10 @@
 //!
 //! Basic support for the Anvil protocol.
 //!
-//! This crate is always `no-std` compatible and doesn't perform any allocation.
+//! This crate is always `no-std` compatible.
 //!
 //! # Features
-//! * `std` (default): enables conversion between error types for dependent crates. Currently doesn't
-//!   modify any of this crate's own code.
+//! * `alloc` (default): Enables convenience methods that can perform allocation.
 
 #![no_std]
 
@@ -13,6 +12,9 @@ use bytes::BufMut;
 use core::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use yarms_chunk_loader::{ChunkReadError, ChunkReadResult};
 use yarms_std::{buf_fill::BufSeek, io::SeekFrom};
+
+#[cfg(feature = "alloc")]
+pub(crate) extern crate alloc;
 
 #[cfg(target_pointer_width = "16")]
 // We need to be capable of putting an entire chunk in a slice.
@@ -268,7 +270,7 @@ impl ChunkPointer {
 /// region_, NOT a chunk _within_ the region. For that, use [`region_relative_coordinate`].
 #[inline]
 #[must_use]
-pub fn region_coordinate(world_c: i32) -> i32 {
+pub const fn region_coordinate(world_c: i32) -> i32 {
     world_c >> 5
 }
 
@@ -277,7 +279,7 @@ pub fn region_coordinate(world_c: i32) -> i32 {
 /// to. The returned value will be in range (0..32).
 #[inline]
 #[must_use]
-pub fn region_relative_coordinate(world_c: i32) -> i32 {
+pub const fn region_relative_coordinate(world_c: i32) -> i32 {
     world_c & 31
 }
 
@@ -305,11 +307,149 @@ impl AnvilHeader<'_> {
     ) -> Option<ChunkPointer> {
         #[allow(
             clippy::cast_sign_loss,
-            reason = "this method is allowed to return anything when given numbers outside 0..32"
+            reason = "this method is allowed to return anything for parameters outside 0..32"
         )]
         self.0
             .get((region_relative_x | (region_relative_z << 5)) as usize)
             .and_then(|x| *x)
+    }
+}
+
+#[allow(clippy::cast_sign_loss, reason = "bithacking")]
+const fn printed_length(n: i32) -> usize {
+    match n {
+        // special case i32::MIN because it will cause abs to overflow
+        i32::MIN => 11,
+
+        // special case 0 because it will cause ilog10 to panic
+        0 => 1,
+
+        // for all other values, compute the length by using ilog10, and add 1 if the original
+        // value is negative
+        n => (n.abs().ilog10() + ((n as u32) >> 31) + 1) as usize,
+    }
+}
+
+#[allow(clippy::cast_sign_loss, reason = "bithacking")]
+#[allow(clippy::cast_possible_truncation, reason = "bithacking")]
+fn fill_region(mut region: i32, mut offset: usize, arr: &mut [u8]) {
+    loop {
+        arr[offset] = b'0' + ((region % 10).unsigned_abs() as u8);
+        region /= 10;
+        offset -= 1;
+
+        if region == 0 {
+            break;
+        }
+    }
+}
+
+///
+/// The largest possible region file name. This can be used to pre-size e.g. an array on the stack
+/// that can be used in a call to [`region_file_name_borrowed`].
+pub const LARGEST_REGION_FILE_NAME: usize = region_file_name_len(i32::MIN, i32::MIN);
+
+///
+/// The smallest possible region file name.
+pub const SMALLEST_REGION_FILE_NAME: usize = region_file_name_len(0, 0);
+
+const BASE_REGION_NAME_LEN: usize = 7;
+
+///
+/// Computes the exact length that a particular region file name will need.
+///
+/// The smallest value is `SMALLEST_REGION_FILE_NAME`. The largest is `LARGEST_REGION_FILE_NAME`.
+#[must_use]
+pub const fn region_file_name_len(region_x: i32, region_z: i32) -> usize {
+    BASE_REGION_NAME_LEN + printed_length(region_x) + printed_length(region_z)
+}
+
+#[cfg(feature = "alloc")]
+///
+/// Works exactly like [`region_file_name_borrowed`] but returns an owned
+/// [`alloc::string::String`].
+#[must_use]
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "only reason this would panic is a library bug"
+)]
+pub fn region_file_name_owned(region_x: i32, region_z: i32) -> alloc::string::String {
+    use alloc::vec;
+
+    let len = region_file_name_len(region_x, region_z);
+    let mut storage = vec![0_u8; len];
+
+    #[cfg(not(debug_assertions))]
+    // SAFETY:
+    // * we precisely pre-size our storage based on region_file_name_len, so region_file_name can't
+    //   return None
+    // * `region_file_name_borrowed` will write exactly `len` ASCII bytes to `storage`
+    unsafe {
+        region_file_name_borrowed(region_x, region_z, &mut storage).unwrap_unchecked();
+        alloc::string::String::from_utf8_unchecked(storage)
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        region_file_name_borrowed(region_x, region_z, &mut storage)
+            .expect("storage should have enough room");
+        alloc::string::String::from_utf8(storage).expect("string should be valid UTF-8")
+    }
+}
+
+///
+/// Computes a "region file name" (example: "r.0.-1.mca") from two given coordinates.
+///
+/// This function does not allocate, so it uses the bytes provided by `storage` to write the
+/// result. If there aren't enough bytes, `None` is returned. Otherwise, it is guaranteed to write
+/// precisely [`region_file_name_len`] bytes into the buffer. This function will _never_ write more
+/// than [`LARGEST_REGION_FILE_NAME`] bytes.
+///
+/// If the `alloc` feature is enabled, users may also call [`region_file_name_owned`] to construct
+/// an owned string.
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "only reason this would panic is a library bug"
+)]
+pub fn region_file_name_borrowed(region_x: i32, region_z: i32, storage: &mut [u8]) -> Option<&str> {
+    let x_len = printed_length(region_x);
+    let z_len = printed_length(region_z);
+
+    let total_len = BASE_REGION_NAME_LEN + x_len + z_len;
+
+    if storage.len() < total_len {
+        return None;
+    }
+
+    storage[0] = b'r';
+    storage[1] = b'.';
+    storage[2 + x_len] = b'.';
+    storage[3 + x_len + z_len] = b'.';
+    storage[4 + x_len + z_len] = b'm';
+    storage[5 + x_len + z_len] = b'c';
+    storage[6 + x_len + z_len] = b'a';
+
+    if region_x < 0 {
+        storage[2] = b'-';
+    }
+
+    if region_z < 0 {
+        storage[3 + x_len] = b'-';
+    }
+
+    fill_region(region_x, 2 + x_len - 1, storage);
+    fill_region(region_z, 3 + x_len + z_len - 1, storage);
+
+    #[cfg(not(debug_assertions))]
+    {
+        // SAFETY:
+        // * every byte in 0..total_len has been written, and is a valid ASCII byte
+        Some(unsafe { str::from_utf8_unchecked(&storage[..total_len]) })
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        Some(str::from_utf8(&storage[..total_len]).expect("string should be valid UTF-8"))
     }
 }
 
@@ -344,9 +484,9 @@ pub async fn load_header<F: BufSeek + ?Sized>(
         );
     };
 
-    struct CleanOnDrop<'a>(&'a mut [u8]);
+    struct DropGuard<'a>(&'a mut [u8]);
 
-    impl Drop for CleanOnDrop<'_> {
+    impl Drop for DropGuard<'_> {
         fn drop(&mut self) {
             // this usage of chunks_exact_mut seems to reliably lower to SIMD instructions
             for chunk in self.0.chunks_exact_mut(CHUNK_POINTER_SIZE) {
@@ -387,7 +527,7 @@ pub async fn load_header<F: BufSeek + ?Sized>(
     // if this is dropped before having fully run through all of the chunks, this will clear the
     // entire byte array to avoid exposing ChunkPointer instances with an invalid internal state
     // that could lead to unsoundness.
-    let clean = CleanOnDrop(as_u8);
+    let clean = DropGuard(as_u8);
     fill.fill_buf(&mut &mut *clean.0, Some(BYTES)).await?;
 
     Ok(())
@@ -492,4 +632,70 @@ pub async fn prepare_buffer<'b, B: BufMut + AsRef<[u8]>, F: BufSeek>(
     // SAFETY:
     // - actual_length is nonzero and non-negative
     Ok(unsafe { ChunkMeta::new_unchecked(actual_length, compression) })
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate alloc;
+
+    use alloc::string::String;
+    use alloc::string::ToString;
+    use bytes::BytesMut;
+
+    use crate::region_file_name_borrowed;
+
+    fn check_name(expected: &mut String, storage: &mut [u8], x: i32, z: i32) {
+        expected.clear();
+        expected.push_str("r.");
+        expected.push_str(x.to_string().as_str());
+        expected.push_str(".");
+        expected.push_str(z.to_string().as_str());
+        expected.push_str(".mca");
+
+        let actual = region_file_name_borrowed(x, z, storage).expect("should have enough storage");
+
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn basic_load() {
+        let mut read_buf = BytesMut::new();
+        let mut decompress_buf = BytesMut::new();
+    }
+
+    #[test]
+    fn small_region_names() {
+        let mut storage = [0u8; 32];
+        let mut expected = String::new();
+
+        for x in i32::MIN..=(i32::MIN + 1000) {
+            for z in i32::MIN..=(i32::MIN + 1000) {
+                check_name(&mut expected, &mut storage, x, z);
+            }
+        }
+    }
+
+    #[test]
+    fn around_zero_region_names() {
+        let mut storage = [0u8; 32];
+        let mut expected = String::new();
+
+        for x in -1000_i32..=1000 {
+            for z in -1000_i32..=1000 {
+                check_name(&mut expected, &mut storage, x, z);
+            }
+        }
+    }
+
+    #[test]
+    fn large_region_names() {
+        let mut storage = [0u8; 32];
+        let mut expected = String::new();
+
+        for x in (i32::MAX - 1000)..=i32::MAX {
+            for z in (i32::MAX - 1000)..=i32::MAX {
+                check_name(&mut expected, &mut storage, x, z);
+            }
+        }
+    }
 }

@@ -9,9 +9,13 @@ yarms-std = { path = "../yarms-std", default-features = false, features = [ "buf
 
 bytes = { version = "1.10.0", default-features = false }
 
+[dev-dependencies]
+flate2 = "1.1.5"
+yarms-nbt = { path = "../yarms-nbt" }
+
 [lints]
 workspace = true
 
 [features]
-default = [ "std" ]
-std = [ "yarms-chunk-loader/std", "yarms-std/std" ]
+default = [ "alloc" ]
+alloc = []

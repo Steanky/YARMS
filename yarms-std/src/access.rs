@@ -31,6 +31,10 @@ pub trait Accessor {
     /// Non-panicking version of [`Accessor::access`]. Returns `None` if the value could not be
     /// accessed for any reason.
     ///
+    /// For example, a `std::thread::LocalKey<RefCell<T>>` won't be accessable if an attempt is
+    /// made to access it reentrantly from within the same call stack, and a
+    /// [`core::cell::RefCell`] won't be accessible if it is already borrowed mutably.
+    ///
     /// ```
     /// use std::cell::RefCell;
     /// use yarms_std::access::Accessor;
