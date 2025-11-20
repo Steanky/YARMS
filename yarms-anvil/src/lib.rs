@@ -411,9 +411,7 @@ pub fn region_file_name_owned(region_x: i32, region_z: i32) -> alloc::string::St
 ///
 /// # Example
 /// ```
-/// // this size array will work for ALL possible file names!
-/// // note that this example only needs 12
-/// let mut storage = [0_u8; yarms_anvil::LARGEST_REGION_FILE_NAME];
+/// let mut storage = [0_u8; yarms_anvil::region_file_name_len(42, -42)];
 /// let name = yarms_anvil::region_file_name_borrowed(42, -42, &mut storage).expect("should be a valid name");
 ///
 /// assert_eq!("r.42.-42.mca", name);
