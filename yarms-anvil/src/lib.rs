@@ -527,7 +527,8 @@ pub async fn load_header<F: BufSeek + ?Sized>(
     fill.seek(SeekFrom::Start(0)).await?;
 
     // SAFETY:
-    // - Option<ChunkPointer> has size 4
+    // - Option<ChunkPointer> has size 4, is `repr(transparent)` to a `NonZero<u32>`, which is
+    //   guaranteed to have the same and alignment as `u32`
     // - `storage` has ENTRIES elements
     // - BYTES = HEADER_ENTRIES * 4
     // - u8 has size 1
@@ -554,7 +555,11 @@ pub async fn load_header<F: BufSeek + ?Sized>(
 /// by `buf` during filling.
 ///
 /// # Errors
-/// This function returns `Err` if there is an IO error loading chunk data from `fill`.
+/// This function _may_ return `Err` if the chunk data pointed at by `pointer` is invalid. Exactly
+/// which validity checks will be performed is unspecified.
+///
+/// This function will _always_ return `Err` if an IO error occurs while seeking to the offset of
+/// `pointer`, or filling the buffer with the chunk bytes.
 #[allow(
     clippy::missing_panics_doc,
     reason = "this function shouldn't actually panic"
@@ -653,12 +658,17 @@ mod tests {
 
     use alloc::string::String;
     use alloc::string::ToString;
+    use bytes::BytesMut;
+    use yarms_nbt::tag;
 
     use crate::load_header;
+    use crate::prepare_buffer;
     use crate::region_file_name_borrowed;
     use crate::AnvilHeader;
+    use crate::Compression;
     use crate::HEADER_ENTRIES;
     use crate::LARGEST_REGION_FILE_NAME;
+    use crate::NO_COMPRESSION;
     use crate::SECTOR_BYTES;
 
     use yarms_util_future::runner::block_on;
@@ -674,6 +684,70 @@ mod tests {
         let actual = region_file_name_borrowed(x, z, storage).expect("should have enough storage");
 
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn simple_chunk_load() {
+        const S: usize = 8192;
+
+        let mut storage = alloc::vec![0_u8; S + usize::from(SECTOR_BYTES)];
+
+        // write the header: offset is 2 sectors (8192 bytes), length is 1 sector (4096 bytes)
+        storage[0] = 0x00;
+        storage[1] = 0x00;
+        storage[2] = 0x02;
+        storage[3] = 0x01;
+
+        // write length prefix of 7
+        storage[S] = 0x00;
+        storage[S + 1] = 0x00;
+        storage[S + 2] = 0x00;
+        storage[S + 3] = 0x07;
+
+        // this test chunk doesn't use compression
+        storage[S + 4] = NO_COMPRESSION;
+
+        // remainder of the data is chunk NBT:
+
+        // root type is TAG_Compound
+        storage[S + 5] = yarms_nbt::TAG_COMPOUND;
+
+        // length of name is 2
+        storage[S + 6] = 0x00;
+        storage[S + 7] = 0x02;
+
+        // the name of the root tag
+        storage[S + 8] = b'H';
+        storage[S + 9] = b'i';
+
+        // end of the root tag
+        storage[S + 10] = yarms_nbt::TAG_END;
+
+        let mut cursor = std::io::Cursor::new(storage);
+        let mut headers = [None; HEADER_ENTRIES];
+
+        block_on(load_header(&mut cursor, &mut headers))
+            .expect("should have enough bytes in cursor");
+
+        let ptr = AnvilHeader(&mut headers)
+            .pointer_at(0, 0)
+            .expect("chunk 0, 0 should have a pointer");
+
+        let mut buf = BytesMut::new();
+        let meta = block_on(prepare_buffer(ptr, &mut buf, &mut cursor))
+            .expect("chunk data should be valid and no IO error should occur");
+
+        assert_eq!(meta.compression_type(), Compression::None);
+
+        let start = meta.chunk_data_start();
+        let len = meta.len().get();
+
+        let buf = buf.as_ref();
+        let chunk_data = &buf[start..start + len];
+
+        let nbt = yarms_nbt::deserialize_file(chunk_data).expect("chunk should contain valid NBT");
+
+        assert_eq!(nbt, tag!(Compound["Hi"]: {}));
     }
 
     #[test]
