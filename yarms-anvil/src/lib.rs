@@ -166,8 +166,8 @@ impl<'b> ChunkMeta<'b> {
     }
 }
 
-const OFFSET_MASK: u32 = 0x00_FF_FF_FF_u32;
-const LENGTH_MASK: u32 = 0xFF_00_00_00_u32;
+const OFFSET_MASK: u32 = 0xFF_FF_FF_00_u32;
+const LENGTH_MASK: u32 = 0x00_00_00_FF_u32;
 
 #[inline]
 fn valid_repr(repr: u32) -> bool {
@@ -178,15 +178,15 @@ impl ChunkPointer {
     ///
     /// Try to construct a [`ChunkPointer`] from 4 _big-endian_ bytes.
     ///
-    /// Returns `None` if the _most significant_ 8 bits are zero, or the least significant 24 bits
+    /// Returns `None` if the _most significant_ 24 bits are zero, or the least significant 8 bits
     /// are zero, or all bits are zero.
     #[allow(
         clippy::missing_panics_doc,
         reason = "this function shouldn't actually panic"
     )]
     #[must_use]
-    pub fn try_from_bytes(bytes: [u8; 4]) -> Option<Self> {
-        let repr = u32::from_be_bytes(bytes);
+    pub fn try_from_be_bytes(be_bytes: [u8; 4]) -> Option<Self> {
+        let repr = u32::from_be_bytes(be_bytes);
 
         // prevent from constructing an invalid ChunkLocation; this must also ensure that repr != 0
         if !valid_repr(repr) {
@@ -217,12 +217,13 @@ impl ChunkPointer {
     #[inline]
     #[must_use]
     pub fn offset_bytes(self) -> NonZeroU64 {
-        let sectors = u64::from(self.repr.get() & OFFSET_MASK);
+        // get the 24 most significant bits and shift
+        let sectors = u64::from((self.repr.get() & OFFSET_MASK) >> u8::BITS);
 
         // to catch UB in tests. this is NOT relied upon for safety in release builds!
         debug_assert!(
             (1..=0xFF_FF_FF_u64).contains(&sectors),
-            "sectors out of range 0x01..=0xFFFFFF"
+            "sectors out of range 0x01..=0xFFFFFF: {sectors}"
         );
 
         let result = sectors * u64::from(SECTOR_BYTES);
@@ -241,8 +242,8 @@ impl ChunkPointer {
     #[inline]
     #[must_use]
     pub fn length_bytes(self) -> NonZeroUsize {
-        // get the 8 most significant bits
-        let sectors: u32 = (self.repr.get() & LENGTH_MASK) >> (u32::BITS - 8);
+        // get the 8 least significant bits
+        let sectors: u32 = self.repr.get() & LENGTH_MASK;
 
         // to catch UB in tests. this is NOT relied upon for safety in release builds!
         debug_assert!(
@@ -414,7 +415,9 @@ pub fn region_file_name_owned(region_x: i32, region_z: i32) -> alloc::string::St
 /// let mut storage = [0_u8; yarms_anvil::region_file_name_len(42, -42)];
 /// let name = yarms_anvil::region_file_name_borrowed(42, -42, &mut storage).expect("should be a valid name");
 ///
-/// assert_eq!("r.42.-42.mca", name);
+/// let expected = "r.42.-42.mca";
+/// assert_eq!(expected, name);
+/// assert_eq!(storage, expected.as_ref());
 /// ```
 #[allow(
     clippy::missing_panics_doc,
@@ -651,8 +654,14 @@ mod tests {
     use alloc::string::String;
     use alloc::string::ToString;
 
+    use crate::load_header;
     use crate::region_file_name_borrowed;
+    use crate::AnvilHeader;
+    use crate::HEADER_ENTRIES;
     use crate::LARGEST_REGION_FILE_NAME;
+    use crate::SECTOR_BYTES;
+
+    use yarms_util_future::runner::block_on;
 
     fn check_name(expected: &mut String, storage: &mut [u8], x: i32, z: i32) {
         expected.clear();
@@ -665,6 +674,28 @@ mod tests {
         let actual = region_file_name_borrowed(x, z, storage).expect("should have enough storage");
 
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn basic_header_load() {
+        let mut header = [0_u8; HEADER_ENTRIES * 4];
+        header[0] = 0x00;
+        header[1] = 0x00;
+        header[2] = 0x42;
+        header[3] = 0x10;
+
+        let mut cursor = std::io::Cursor::new(header);
+
+        let mut storage = [None; HEADER_ENTRIES];
+        block_on(load_header(&mut cursor, &mut storage))
+            .expect("should have enough bytes in cursor");
+
+        let chunk = AnvilHeader(&mut storage)
+            .pointer_at(0, 0)
+            .expect("chunk 0, 0 should have a pointer");
+
+        assert_eq!(chunk.offset_bytes().get(), 0x42 * u64::from(SECTOR_BYTES));
+        assert_eq!(chunk.length_bytes().get(), 0x10 * usize::from(SECTOR_BYTES));
     }
 
     #[test]
